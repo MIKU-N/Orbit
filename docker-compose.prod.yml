@@ -1,0 +1,51 @@
+services:
+  orbit:
+    image: ${ORBIT_IMAGE:-ghcr.io/miku-n/orbit:latest}
+    container_name: orbit
+    restart: unless-stopped
+    # 使用宿主机网络，确保：
+    # 1. 三网自动路由（LAN / Tailscale / WAN）获取真实客户端 IP，不被 Docker NAT 改写
+    # 2. 节点监控插件准确采集宿主机网卡流量、真实 LAN/Tailscale IP 与主机名
+    # 3. 外部插件 httpProxy 可直连本机及内网/Tailscale 服务
+    network_mode: host
+    # 共享宿主机 PID 命名空间，使节点监控可统计真实进程数
+    pid: host
+    volumes:
+      # 持久化数据目录（SQLite 数据库、.jwt_secret、上传文件、壁纸/图标/字体、外部插件）
+      - ${ORBIT_DATA_PATH:-./data}:/app/data
+      # 让节点监控识别宿主机真实系统名称而非容器内 Alpine
+      - /etc/os-release:/etc/os-release:ro
+      # 如需监控额外挂载的数据盘/NAS 卷，可按需取消注释并改为宿主机路径（只读挂载）：
+      # - /mnt/storage:/mnt/storage:ro
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # host 模式下直接通过 ORBIT_ADDR 修改监听端口（无需配置 ports:）
+      - ORBIT_ADDR=${ORBIT_ADDR:-:8080}
+      - ORBIT_DATA_DIR=/app/data
+      - ORBIT_LAN_MAX_MB=${ORBIT_LAN_MAX_MB:-10240}
+      - ORBIT_TS_MAX_MB=${ORBIT_TS_MAX_MB:-2048}
+      - ORBIT_WAN_MAX_MB=${ORBIT_WAN_MAX_MB:-100}
+      - ORBIT_MAX_STORAGE_MB=${ORBIT_MAX_STORAGE_MB:-20480}
+      # 纯内网直连无反代时建议 false（防止客户端伪造 X-Forwarded-For）；
+      # 若前端有 Nginx / Caddy 反代请设为 true
+      - ORBIT_TRUST_PROXY=${ORBIT_TRUST_PROXY:-false}
+      # 若同时通过公网域名反代访问，填入逗号分隔的公网域名，强制按 WAN 策略限额
+      - ORBIT_WAN_HOSTS=${ORBIT_WAN_HOSTS:-}
+      # 首次启动推荐通过网页引导创建管理员；如需无界面自动初始化可在 .env 中设置：
+      # - ORBIT_ADMIN_USER=${ORBIT_ADMIN_USER:-}
+      # - ORBIT_ADMIN_PASS=${ORBIT_ADMIN_PASS:-}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "ADDR=$${ORBIT_ADDR:-:8080}; HOST=$${ADDR%:*}; PORT=$${ADDR##*:}; case \"$$HOST\" in ''|'0.0.0.0'|'[::]') HOST='127.0.0.1' ;; esac; wget -qO- \"http://$$HOST:$${PORT:-8080}/api/auth/status\" >/dev/null 2>&1 || exit 1",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

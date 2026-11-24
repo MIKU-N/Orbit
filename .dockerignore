@@ -1,0 +1,28 @@
+# Git & CI
+.git
+.github
+.gitignore
+
+# Local build artifacts & runtime data
+bin/
+data/
+data-test/
+*.db
+*.db-shm
+*.db-wal
+*.log
+.env
+.env.*
+.DS_Store
+
+# Frontend dependencies & build outputs (built cleanly in web-builder stage)
+web/node_modules/
+web/dist/
+internal/webui/dist/
+
+# Docs & deploy templates not required for image build
+deploy/
+docker-compose*.yml
+README.md
+LICENSE
+Makefile
