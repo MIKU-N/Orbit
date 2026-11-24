@@ -1,0 +1,17 @@
+# 公网 VPS 上的 Caddy 配置示例（通过 Tailscale 反代至家里内网 Orbit 服务）
+# 将 orbit.example.com 替换为你的域名，100.64.0.10 替换为家里主机的 Tailscale IP
+
+orbit.example.com {
+	encode zstd gzip
+
+	# 允许单次请求体最大 120MB（Orbit 服务端仍会按 ORBIT_WAN_MAX_MB 做严格校验）
+	request_body {
+		max_size 120MB
+	}
+
+	reverse_proxy 100.64.0.10:8080 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

@@ -1,0 +1,21 @@
+services:
+  orbit:
+    build: .
+    image: orbit:latest
+    container_name: orbit
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ORBIT_ADDR=:8080
+      - ORBIT_DATA_DIR=/app/data
+      - ORBIT_LAN_MAX_MB=10240
+      - ORBIT_TS_MAX_MB=2048
+      - ORBIT_WAN_MAX_MB=100
+      - ORBIT_MAX_STORAGE_MB=20480
+      - ORBIT_TRUST_PROXY=true
+      # - ORBIT_WAN_HOSTS=orbit.example.com
+      # - ORBIT_ADMIN_USER=admin
+      # - ORBIT_ADMIN_PASS=change-me-strong
