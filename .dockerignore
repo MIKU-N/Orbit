@@ -20,7 +20,8 @@ web/node_modules/
 web/dist/
 internal/webui/dist/
 
-# Docs & deploy templates not required for image build
+# Docs, branding & deploy templates not required for image build
+assets/
 deploy/
 docker-compose*.yml
 README.md

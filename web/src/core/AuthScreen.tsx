@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Copy, Download, Info, Sparkles, X } from 'lucide-react';
+import { Copy, Download, Info, X } from 'lucide-react';
 import { api } from '../api/client';
 import type { PublicShareMeta } from '../types';
 import { formatBytes } from '../sdk/primitives';
@@ -94,12 +94,11 @@ export function AuthScreen({
       )}
 
       <div className="text-center space-y-1.5">
-        <div
-          className="w-11 h-11 mx-auto rounded-2xl flex items-center justify-center text-white shadow-lg"
-          style={{ background: 'var(--brand-solid)' }}
-        >
-          <Sparkles className="w-5 h-5" />
-        </div>
+        <img
+          src="/apple-touch-icon.png"
+          alt="Orbit · 星轨"
+          className="w-12 h-12 mx-auto rounded-2xl shadow-lg select-none"
+        />
         <h1 className="text-base font-semibold tracking-tight">Orbit · 星轨</h1>
         <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
           {!initialized ? '首次启动 · 创建管理员账号' : '登录个人工作台'}
