@@ -5,6 +5,7 @@ import type {
   BookmarkGroup,
   ClipItem,
   FilesResponse,
+  HitokotoQuote,
   PluginManifest,
   PluginStateRecord,
   PublicConfig,
@@ -68,6 +69,12 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   logout: () => req<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  uploadAvatar: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return req<{ avatar: string }>('/api/auth/avatar', { method: 'POST', body: fd });
+  },
+  deleteAvatar: () => req<{ ok: boolean; avatar: string }>('/api/auth/avatar', { method: 'DELETE' }),
   changePassword: (oldPassword: string, newPassword: string) =>
     req<{ ok: boolean }>('/api/auth/password', {
       method: 'POST',
@@ -98,6 +105,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ name }),
     }),
+  updateGroup: (id: number, name: string) =>
+    req<{ ok: boolean; id: number; name: string }>(`/api/groups/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    }),
   deleteGroup: (id: number) => req<{ ok: boolean }>(`/api/groups/${id}`, { method: 'DELETE' }),
   createBookmark: (payload: Partial<Bookmark>) =>
     req<{ bookmark: Bookmark }>('/api/bookmarks', {
@@ -111,6 +123,16 @@ export const api = {
     }),
   deleteBookmark: (id: number) =>
     req<{ ok: boolean }>(`/api/bookmarks/${id}`, { method: 'DELETE' }),
+  batchDeleteBookmarks: (ids: number[]) =>
+    req<{ ok: boolean; deleted: number }>('/api/bookmarks/batch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+  batchMoveBookmarks: (ids: number[], group_id: number) =>
+    req<{ ok: boolean; moved: number }>('/api/bookmarks/batch-move', {
+      method: 'POST',
+      body: JSON.stringify({ ids, group_id }),
+    }),
   reorderBookmarks: (ids: number[]) =>
     req<{ ok: boolean }>('/api/bookmarks/reorder', {
       method: 'PUT',
@@ -176,16 +198,36 @@ export const api = {
   uploadFileWithProgress: (
     file: File,
     ttlHours: number,
-    onProgress: (pct: number) => void,
+    onProgress: (prog: { percent: number; loaded: number; total: number; speedBps: number }) => void,
   ): Promise<{ file: StagedFile }> => {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/files');
       xhr.withCredentials = true;
+      const startedAt = performance.now();
+      let lastEmit = 0;
+      let sampleAt = startedAt;
+      let sampleLoaded = 0;
+      let speedBps = 0;
       xhr.upload.onprogress = (ev) => {
-        if (ev.lengthComputable) {
-          onProgress(Math.round((ev.loaded / ev.total) * 100));
+        if (!ev.lengthComputable) return;
+        const now = performance.now();
+        if (now - lastEmit < 120 && ev.loaded < ev.total) return;
+        const winSec = (now - sampleAt) / 1000;
+        if (winSec >= 0.3) {
+          speedBps = Math.max(0, (ev.loaded - sampleLoaded) / winSec);
+          sampleLoaded = ev.loaded;
+          sampleAt = now;
+        } else if (speedBps === 0) {
+          speedBps = ev.loaded / Math.max(0.05, (now - startedAt) / 1000);
         }
+        lastEmit = now;
+        onProgress({
+          percent: Math.min(100, Math.round((ev.loaded / ev.total) * 100)),
+          loaded: ev.loaded,
+          total: ev.total,
+          speedBps,
+        });
       };
       xhr.onload = () => {
         let parsed: Record<string, unknown> = {};
@@ -262,6 +304,16 @@ export const api = {
     if (opts.refresh) params.set('refresh', '1');
     return req<WeatherPayload>(`/api/weather?${params.toString()}`);
   },
+  getHitokoto: (opts?: { mode?: 'auto' | 'api' | 'builtin'; types?: string[]; apiUrl?: string; exclude?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.mode) params.set('mode', opts.mode);
+    if (opts?.types?.length) params.set('types', opts.types.join(','));
+    if (opts?.apiUrl?.trim()) params.set('api_url', opts.apiUrl.trim());
+    if (opts?.exclude) params.set('exclude', opts.exclude);
+    const qs = params.toString();
+    return req<HitokotoQuote>(`/api/hitokoto${qs ? `?${qs}` : ''}`);
+  },
+  listBuiltinHitokoto: () => req<{ quotes: HitokotoQuote[] }>('/api/hitokoto/builtin'),
 
   listPlugins: () => req<{ plugins: PluginStateRecord[] }>('/api/plugins'),
   updatePlugin: (id: string, patch: { enabled?: boolean; config?: Record<string, unknown> }) =>

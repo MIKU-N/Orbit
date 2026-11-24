@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { Download, Trash2, Upload } from 'lucide-react';
 import { api } from '../../api/client';
 import { useOrbitHost } from '../../sdk/host';
-import { SharedBadge, formatBytes, formatSpeed } from '../../sdk/primitives';
+import { SharedBadge, formatBytes, formatLimitMB, formatSpeed } from '../../sdk/primitives';
 import type { HostAPI, OrbitPlugin } from '../../sdk/types';
 import type { StagedFile } from '../../types';
 
@@ -14,13 +14,21 @@ function TransferDrawer() {
   const p2pFileInputRef = useRef<HTMLInputElement>(null);
   const stagingFileInputRef = useRef<HTMLInputElement>(null);
 
-  const { filesData, peers, wsConnected, p2pProgress, uploadError, uploadProgress } = host;
+  const { filesData, peers, wsConnected, p2pProgress, uploadError, uploadProgress, detectedZone, limits } = host;
 
+  const effectiveZone = filesData?.detected_zone || detectedZone || 'lan';
+  const effectiveLimitMB =
+    filesData?.zone_limit_mb ??
+    (effectiveZone === 'lan'
+      ? limits.lan_mb
+      : effectiveZone === 'tailscale'
+        ? limits.ts_mb
+        : limits.wan_mb);
   const zoneLabel = {
-    lan: '局域网不限',
-    tailscale: `TS ≤ ${filesData?.zone_limit_mb ?? 2048} MB`,
-    wan: `外网 ≤ ${filesData?.zone_limit_mb ?? 100} MB`,
-  }[filesData?.detected_zone || 'lan'];
+    lan: `局域网 ≤ ${formatLimitMB(effectiveLimitMB)}`,
+    tailscale: `TS ≤ ${formatLimitMB(effectiveLimitMB)}`,
+    wan: `外网 ≤ ${formatLimitMB(effectiveLimitMB)}`,
+  }[effectiveZone];
 
   return (
     <div className="flex-1 flex flex-col min-h-0 p-4 gap-4 overflow-y-auto">
@@ -84,7 +92,8 @@ function TransferDrawer() {
                 {p2pProgress.fileName}
               </span>
               <span className="font-mono shrink-0" style={{ color: 'var(--ok)' }}>
-                {formatSpeed(p2pProgress.speedBps)} · {p2pProgress.percent}%
+                {p2pProgress.speedBps > 0 ? `${formatSpeed(p2pProgress.speedBps)} · ` : ''}
+                {p2pProgress.percent}%
               </span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--pill-hover)' }}>
@@ -93,6 +102,11 @@ function TransferDrawer() {
                 style={{ width: `${p2pProgress.percent}%`, background: 'var(--brand-solid)' }}
               />
             </div>
+            {p2pProgress.totalBytes > 0 && (
+              <div className="font-mono text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                {formatBytes(p2pProgress.transferredBytes)} / {formatBytes(p2pProgress.totalBytes)}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -151,16 +165,24 @@ function TransferDrawer() {
 
         {uploadProgress !== null && (
           <div className="p-3 rounded-xl space-y-1.5 text-xs" style={{ background: 'var(--pill-bg)' }}>
-            <div className="flex justify-between">
-              <span>上传中...</span>
-              <span className="font-mono">{uploadProgress}%</span>
+            <div className="flex justify-between gap-2">
+              <span className="truncate">上传中：{uploadProgress.fileName}</span>
+              <span className="font-mono shrink-0" style={{ color: 'var(--ok)' }}>
+                {uploadProgress.speedBps > 0 ? `${formatSpeed(uploadProgress.speedBps)} · ` : ''}
+                {uploadProgress.percent}%
+              </span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--pill-hover)' }}>
               <div
                 className="h-full transition-all"
-                style={{ width: `${uploadProgress}%`, background: 'var(--brand-solid)' }}
+                style={{ width: `${uploadProgress.percent}%`, background: 'var(--brand-solid)' }}
               />
             </div>
+            {uploadProgress.total > 0 && (
+              <div className="font-mono text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                {formatBytes(uploadProgress.loaded)} / {formatBytes(uploadProgress.total)}
+              </div>
+            )}
           </div>
         )}
 

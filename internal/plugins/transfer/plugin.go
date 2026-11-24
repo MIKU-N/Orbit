@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -264,9 +265,18 @@ func (p *Plugin) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			n, copyErr := io.Copy(dst, io.LimitReader(part, maxBytes+1))
-			_ = dst.Close()
+			bw := bufio.NewWriterSize(dst, 1<<20)
+			copyBuf := make([]byte, 1<<20)
+			n, copyErr := io.CopyBuffer(bw, io.LimitReader(part, maxBytes+1), copyBuf)
+			flushErr := bw.Flush()
+			closeErr := dst.Close()
 			_ = part.Close()
+			if copyErr == nil && flushErr != nil {
+				copyErr = flushErr
+			}
+			if copyErr == nil && closeErr != nil {
+				copyErr = closeErr
+			}
 
 			if copyErr != nil {
 				_ = os.Remove(dstPath)
@@ -319,7 +329,11 @@ func (p *Plugin) handleUploadFile(w http.ResponseWriter, r *http.Request) {
 		ID: id, UserID: u.ID, OrigName: origName, MimeType: mimeType,
 		SizeBytes: savedSize, Zone: zone, Uploader: uploader, ExpiresAt: exp, CreatedAt: now,
 	}
-	p.host.Hub().BroadcastUser(u.ID, "files_updated", map[string]any{"action": "created", "id": id})
+	p.host.Hub().BroadcastUser(u.ID, "files_updated", map[string]any{
+		"action": "created",
+		"id":     id,
+		"file":   staged,
+	})
 	plugin.WriteJSON(w, http.StatusCreated, map[string]any{"file": staged})
 }
 
@@ -572,5 +586,6 @@ func (p *Plugin) handlePublicShareDownload(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", sizeBytes))
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(origName, `"`, "")))
-	_, _ = io.Copy(w, f)
+	copyBuf := make([]byte, 1<<20)
+	_, _ = io.CopyBuffer(w, f, copyBuf)
 }

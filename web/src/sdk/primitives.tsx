@@ -11,6 +11,7 @@ import {
   LayoutGrid,
   Palette,
   Plug,
+  Quote,
   Search,
   Settings,
   UploadCloud,
@@ -25,6 +26,7 @@ export {
   BUILTIN_ICON_NAMES,
   BookmarkIcon,
   formatBytes,
+  formatLimitMB,
   formatSpeed,
   getBookmarkActiveUrl,
   isImageIconValue,
@@ -83,6 +85,8 @@ export function getPluginIcon(name: string, className = 'w-4 h-4'): React.ReactN
       return <Settings className={className} />;
     case 'globe':
       return <Globe className={className} />;
+    case 'quote':
+      return <Quote className={className} />;
     case 'plug':
     default:
       return <Plug className={className} />;

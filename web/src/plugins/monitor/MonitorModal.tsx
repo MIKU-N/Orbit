@@ -92,7 +92,7 @@ export function MonitorModal({ open, metrics, onClose, onOpenCustomize }: Monito
           <div className="px-3 py-2 rounded-xl flex items-center justify-between gap-2" style={{ background: 'var(--pill-bg)' }}>
             <span>实时速率</span>
             <span className="font-mono">
-              ↑ {formatSpeed(metrics.net_up_bps)}/s · ↓ {formatSpeed(metrics.net_down_bps)}/s
+              ↑ {formatSpeed(metrics.net_up_bps)} · ↓ {formatSpeed(metrics.net_down_bps)}
             </span>
           </div>
           <div className="px-3 py-2 rounded-xl flex items-center justify-between gap-2" style={{ background: 'var(--pill-bg)' }}>

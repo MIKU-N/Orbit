@@ -232,6 +232,75 @@ export function WeatherSettingsPanel({ highlightSection }: SettingsPanelProps) {
         style={{ ...sectionHighlightStyle('sec-weather-fld'), borderColor: 'var(--glass-border)' }}
         className="space-y-3 pt-4 border-t"
       >
+        <div className="space-y-2">
+          <div className="font-medium text-sm">卡片样式与自定义文案</div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            {(
+              [
+                {
+                  id: 'standard' as const,
+                  title: '样式一 · 经典预报',
+                  desc: '左侧实况温度与细节，右侧展示多日预报槽位',
+                },
+                {
+                  id: 'banner' as const,
+                  title: '样式二 · 文案时钟',
+                  desc: '左侧显示自定义文案，右侧显示实时时间与日期，底部展示天气',
+                },
+              ] as const
+            ).map((opt) => {
+              const active = (wc.style || 'standard') === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => updateWeather({ style: opt.id })}
+                  className="p-3 rounded-xl text-left cursor-pointer transition-all space-y-0.5"
+                  style={{
+                    background: active ? 'var(--brand-solid)' : 'var(--pill-bg)',
+                    color: active ? '#fff' : 'var(--ink)',
+                    border: active ? '1px solid transparent' : '1px solid var(--glass-border)',
+                  }}
+                >
+                  <div className="font-medium">{opt.title}</div>
+                  <div className="opacity-80 leading-relaxed">{opt.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {(wc.style || 'standard') === 'banner' && (
+            <div className="p-3 rounded-xl space-y-1.5" style={{ background: 'var(--pill-bg)' }}>
+              <div className="flex items-center justify-between">
+                <span style={{ color: 'var(--ink-muted)' }}>左侧自定义文案（留空则显示当前地点）</span>
+                {wc.customText && (
+                  <button
+                    type="button"
+                    onClick={() => updateWeather({ customText: '' })}
+                    className="hover:underline cursor-pointer"
+                    style={{ color: 'var(--ink-muted)' }}
+                  >
+                    清空
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                value={wc.customText || ''}
+                onChange={(e) => updateWeather({ customText: e.target.value })}
+                placeholder="例如：星轨之上，保持热爱 / 欢迎回到个人空间"
+                maxLength={80}
+                className="w-full h-8 px-2.5 rounded-lg focus:outline-none"
+                style={{
+                  background: 'rgba(var(--glass-rgb), 0.5)',
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--ink)',
+                }}
+              />
+            </div>
+          )}
+        </div>
+
         <div className="grid sm:grid-cols-3 gap-2.5">
           <div className="p-2.5 rounded-xl space-y-1.5" style={{ background: 'var(--pill-bg)' }}>
             <div style={{ color: 'var(--ink-muted)' }}>温度单位</div>

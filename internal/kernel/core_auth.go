@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -164,9 +166,9 @@ func (k *Kernel) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var u db.User
 	var scopesRaw string
 	err := k.db.QueryRow(
-		`SELECT id, username, password_hash, role, parent_id, share_scopes, api_token, created_at FROM users WHERE username = ?`,
+		`SELECT id, username, password_hash, role, avatar, parent_id, share_scopes, api_token, created_at FROM users WHERE username = ?`,
 		req.Username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.ParentID, &scopesRaw, &u.APIToken, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Avatar, &u.ParentID, &scopesRaw, &u.APIToken, &u.CreatedAt)
 	if err == sql.ErrNoRows || !auth.CheckPassword(u.PasswordHash, req.Password) {
 		plugin.WriteErr(w, http.StatusUnauthorized, "invalid username or password")
 		return
@@ -295,7 +297,7 @@ func (k *Kernel) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		plugin.WriteErr(w, http.StatusForbidden, "admin only")
 		return
 	}
-	rows, err := k.db.Query(`SELECT id, username, role, parent_id, share_scopes, created_at FROM users ORDER BY id ASC`)
+	rows, err := k.db.Query(`SELECT id, username, role, avatar, parent_id, share_scopes, created_at FROM users ORDER BY id ASC`)
 	if err != nil {
 		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
 		return
@@ -305,7 +307,7 @@ func (k *Kernel) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var item db.User
 		var scopesRaw string
-		if err := rows.Scan(&item.ID, &item.Username, &item.Role, &item.ParentID, &scopesRaw, &item.CreatedAt); err == nil {
+		if err := rows.Scan(&item.ID, &item.Username, &item.Role, &item.Avatar, &item.ParentID, &scopesRaw, &item.CreatedAt); err == nil {
 			item.ShareScopes = db.ParseShareScopes(scopesRaw)
 			list = append(list, item)
 		}
@@ -442,6 +444,9 @@ func (k *Kernel) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		plugin.WriteErr(w, http.StatusBadRequest, "不能删除当前登录账号")
 		return
 	}
+	var oldAvatar string
+	_ = k.db.QueryRow(`SELECT avatar FROM users WHERE id = ?`, id).Scan(&oldAvatar)
+
 	res, err := k.db.Exec(`DELETE FROM users WHERE id = ?`, id)
 	if err != nil {
 		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
@@ -451,6 +456,12 @@ func (k *Kernel) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if aff == 0 {
 		plugin.WriteErr(w, http.StatusNotFound, "用户不存在")
 		return
+	}
+	if strings.HasPrefix(oldAvatar, "/api/avatars/") {
+		name := filepath.Base(strings.TrimPrefix(oldAvatar, "/api/avatars/"))
+		if name != "" && name != "." && !strings.Contains(name, "..") {
+			_ = os.Remove(filepath.Join(k.cfg.DataDir, "avatars", name))
+		}
 	}
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -577,6 +588,7 @@ func (k *Kernel) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 		"weatherConfig",
 		"weatherCity",
 		"weatherLabel",
+		"hitokotoConfig",
 		"footer",
 	}
 	for _, key := range safeKeys {

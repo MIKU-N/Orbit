@@ -163,6 +163,7 @@ export interface HostAPI {
   canViewMonitor: boolean;
   zone: NetworkZone;
   detectedZone: NetworkZone;
+  clientIp: string;
   setZone: (z: NetworkZone) => void;
   cycleZone: () => void;
   limits: { lan_mb: number; ts_mb: number; wan_mb: number };
@@ -198,6 +199,8 @@ export interface HostAPI {
   toast: (msg: string, warn?: boolean) => void;
   copyText: (text: string, label?: string) => void;
   rotateToken: () => Promise<void>;
+  uploadAvatar: (file: File) => Promise<void>;
+  deleteAvatar: () => Promise<void>;
 
   searchInputRef: React.RefObject<HTMLInputElement | null>;
   searchElevated: boolean;
@@ -210,21 +213,27 @@ export interface HostAPI {
   refreshBookmarks: () => Promise<void>;
   openBookmarkModal: (bm?: Bookmark | null) => void;
   openBookmark: (bm: Bookmark) => void;
+  saveBookmark: (payload: Partial<Bookmark>, editingId?: number) => Promise<void>;
+  deleteBookmark: (id: number) => Promise<void>;
+  batchDeleteBookmarks: (ids: number[]) => Promise<void>;
+  batchMoveBookmarks: (ids: number[], groupId: number) => Promise<void>;
   reorderBookmarks: (ids: number[]) => void;
   createGroup: (name: string) => Promise<BookmarkGroup | null>;
+  updateGroup: (id: number, name: string) => Promise<void>;
   deleteGroup: (id: number) => Promise<void>;
-  importSunPanel: (rawJson: string) => Promise<void>;
-  importBrowserBookmarks: (html: string, groupName: string) => Promise<void>;
+  importSunPanel: (rawJson: string) => Promise<boolean>;
+  importBrowserBookmarks: (html: string, groupName: string) => Promise<boolean>;
 
   openMonitorModal: () => void;
 
   clips: ClipItem[];
   refreshClips: () => Promise<void>;
+  markLocalClipCreated: (id: number) => void;
 
   filesData: FilesResponse | null;
   refreshFiles: () => Promise<void>;
   uploadFiles: (files: FileList | File[]) => Promise<void>;
-  uploadProgress: number | null;
+  uploadProgress: { fileName: string; percent: number; loaded: number; total: number; speedBps: number } | null;
   uploadError: string | null;
   clearUploadError: () => void;
   openShareModal: (target: { kind: 'file' | 'clip'; id: number; label: string }) => void;

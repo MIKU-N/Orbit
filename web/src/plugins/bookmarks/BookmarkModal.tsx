@@ -11,8 +11,8 @@ interface BookmarkModalProps {
   onSave: (payload: Partial<Bookmark>, editingId?: number) => Promise<void>;
   onDelete: (id: number) => Promise<void>;
   onCreateGroup: (name: string) => Promise<BookmarkGroup | null>;
-  onImportSunPanel: (rawJson: string) => Promise<void>;
-  onImportBrowserBookmarks: (html: string, groupName: string) => Promise<void>;
+  onImportSunPanel: (rawJson: string) => Promise<boolean>;
+  onImportBrowserBookmarks: (html: string, groupName: string) => Promise<boolean>;
   onToast?: (msg: string, warn?: boolean) => void;
 }
 
@@ -107,7 +107,7 @@ export function BookmarkModal({
   const fetchTargetUrl = lanUrl.trim() || tsUrl.trim() || wanUrl.trim();
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
       <div className="relative w-full max-w-md max-h-[90vh] overflow-y-auto glass-strong rounded-2xl p-5 space-y-3.5 pop-in text-xs">
         <div className="flex items-center justify-between gap-2">
@@ -194,9 +194,11 @@ export function BookmarkModal({
                 type="button"
                 disabled={!browserHtml.trim()}
                 onClick={async () => {
-                  await onImportBrowserBookmarks(browserHtml, browserGroupName.trim() || '浏览器书签');
-                  setBrowserHtml('');
-                  onClose();
+                  const ok = await onImportBrowserBookmarks(browserHtml, browserGroupName.trim() || '浏览器书签');
+                  if (ok) {
+                    setBrowserHtml('');
+                    onClose();
+                  }
                 }}
                 className="h-8 px-4 rounded-lg font-medium text-white cursor-pointer disabled:opacity-50"
                 style={{ background: 'var(--brand-solid)' }}
@@ -239,9 +241,11 @@ export function BookmarkModal({
                 type="button"
                 disabled={!sunJson.trim()}
                 onClick={async () => {
-                  await onImportSunPanel(sunJson);
-                  setSunJson('');
-                  onClose();
+                  const ok = await onImportSunPanel(sunJson);
+                  if (ok) {
+                    setSunJson('');
+                    onClose();
+                  }
                 }}
                 className="h-8 px-4 rounded-lg font-medium text-white cursor-pointer disabled:opacity-50"
                 style={{ background: 'var(--brand-solid)' }}
@@ -306,6 +310,18 @@ export function BookmarkModal({
               </button>
             </div>
 
+            <input
+              type="text"
+              placeholder="简介 / 备注 (可选)"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="w-full h-9 px-3 rounded-xl focus:outline-none"
+              style={{
+                background: 'var(--pill-bg)',
+                border: '1px solid var(--glass-border)',
+                color: 'var(--ink)',
+              }}
+            />
             <input
               type="text"
               placeholder="内网 URL (http://192.168.1.10:8096)"

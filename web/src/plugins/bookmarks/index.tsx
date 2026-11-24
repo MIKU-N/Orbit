@@ -24,6 +24,7 @@ function BookmarksPluginWidget() {
       onAddBookmark={() => host.openBookmarkModal(null)}
       onEditBookmark={(bm) => host.openBookmarkModal(bm)}
       onReorderBookmarks={host.reorderBookmarks}
+      onBatchDeleteBookmarks={host.batchDeleteBookmarks}
     />
   );
 }
@@ -65,7 +66,7 @@ export const bookmarksPlugin: OrbitPlugin = {
         tabId: 'bookmarks',
         label: '书签管理',
         icon: 'bookmark',
-        searchKeywords: ['书签', '分组', '浏览器', 'html', 'sun-panel', '导入'],
+        searchKeywords: ['书签', '分组', '浏览器', 'html', 'sun-panel', '导入', '批量删除', '编辑', '列表'],
       },
       searchProvider: {
         enabled: true,

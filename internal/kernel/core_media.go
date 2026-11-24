@@ -712,3 +712,131 @@ func (k *Kernel) handleDeleteCustomFont(w http.ResponseWriter, r *http.Request) 
 	_ = os.Remove(filepath.Join(k.cfg.DataDir, "fonts", name))
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// ---------- User Avatars (Upload / Delete / Serve) ----------
+
+const maxAvatarBytes = 5 << 20
+
+func detectAvatarExt(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	if len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
+		return ".png"
+	}
+	if len(data) >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff {
+		return ".jpg"
+	}
+	if len(data) >= 6 && (bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a"))) {
+		return ".gif"
+	}
+	if len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
+		return ".webp"
+	}
+	return ""
+}
+
+func (k *Kernel) removeLocalAvatar(avatarURL string) {
+	if !strings.HasPrefix(avatarURL, "/api/avatars/") {
+		return
+	}
+	name := filepath.Base(strings.TrimPrefix(avatarURL, "/api/avatars/"))
+	if name == "" || name == "." || strings.Contains(name, "..") {
+		return
+	}
+	_ = os.Remove(filepath.Join(k.cfg.DataDir, "avatars", name))
+}
+
+func (k *Kernel) handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
+	u := k.CurrentUser(r)
+	r.Body = http.MaxBytesReader(w, r.Body, maxAvatarBytes+4096)
+	if err := r.ParseMultipartForm(maxAvatarBytes + 4096); err != nil {
+		plugin.WriteErr(w, http.StatusRequestEntityTooLarge, "头像文件不能超过 5 MB")
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		file, _, err = r.FormFile("avatar")
+	}
+	if err != nil {
+		plugin.WriteErr(w, http.StatusBadRequest, "请上传头像图片")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxAvatarBytes+1))
+	if err != nil || len(data) > maxAvatarBytes {
+		plugin.WriteErr(w, http.StatusRequestEntityTooLarge, "头像文件不能超过 5 MB")
+		return
+	}
+
+	ext := detectAvatarExt(data)
+	if ext == "" {
+		plugin.WriteErr(w, http.StatusBadRequest, "仅支持 PNG / JPG / WebP / GIF 格式图片")
+		return
+	}
+
+	avatarDir := filepath.Join(k.cfg.DataDir, "avatars")
+	if err := os.MkdirAll(avatarDir, 0o755); err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "无法创建头像目录")
+		return
+	}
+
+	var randBuf [8]byte
+	_, _ = rand.Read(randBuf[:])
+	fileName := fmt.Sprintf("u%d_%s%s", u.ID, hex.EncodeToString(randBuf[:]), ext)
+	dstPath := filepath.Join(avatarDir, fileName)
+	if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "保存头像失败")
+		return
+	}
+
+	var oldAvatar string
+	_ = k.db.QueryRow(`SELECT avatar FROM users WHERE id = ?`, u.ID).Scan(&oldAvatar)
+
+	newURL := "/api/avatars/" + fileName
+	if _, err := k.db.Exec(`UPDATE users SET avatar = ? WHERE id = ?`, newURL, u.ID); err != nil {
+		_ = os.Remove(dstPath)
+		plugin.WriteErr(w, http.StatusInternalServerError, "更新用户头像失败")
+		return
+	}
+	if oldAvatar != "" && oldAvatar != newURL {
+		k.removeLocalAvatar(oldAvatar)
+	}
+
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{
+		"avatar": newURL,
+	})
+}
+
+func (k *Kernel) handleAvatarDelete(w http.ResponseWriter, r *http.Request) {
+	u := k.CurrentUser(r)
+	var oldAvatar string
+	_ = k.db.QueryRow(`SELECT avatar FROM users WHERE id = ?`, u.ID).Scan(&oldAvatar)
+
+	if _, err := k.db.Exec(`UPDATE users SET avatar = '' WHERE id = ?`, u.ID); err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "重置头像失败")
+		return
+	}
+	k.removeLocalAvatar(oldAvatar)
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"avatar": "",
+	})
+}
+
+func (k *Kernel) handleServeAvatar(w http.ResponseWriter, r *http.Request) {
+	name := filepath.Base(r.PathValue("name"))
+	if name == "" || name == "." || strings.Contains(name, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	fullPath := filepath.Join(k.cfg.DataDir, "avatars", name)
+	if _, err := os.Stat(fullPath); err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeFile(w, r, fullPath)
+}

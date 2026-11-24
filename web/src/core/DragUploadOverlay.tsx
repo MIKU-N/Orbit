@@ -1,21 +1,25 @@
 import { UploadCloud } from 'lucide-react';
+import { formatLimitMB } from '../sdk/primitives';
 import type { NetworkZone } from '../types';
 
 interface DragUploadOverlayProps {
   visible: boolean;
   detectedZone: NetworkZone;
-  wanMaxMB: number;
+  limits: { lan_mb: number; ts_mb: number; wan_mb: number };
 }
 
-export function DragUploadOverlay({ visible, detectedZone, wanMaxMB }: DragUploadOverlayProps) {
+export function DragUploadOverlay({ visible, detectedZone, limits }: DragUploadOverlayProps) {
   if (!visible) return null;
 
-  const hint =
-    detectedZone === 'wan'
-      ? `外网模式单文件限 ${wanMaxMB} MB`
+  const limitMB =
+    detectedZone === 'lan'
+      ? limits.lan_mb
       : detectedZone === 'tailscale'
-        ? 'Tailscale 组网直传'
-        : '局域网直传 · 高速写入';
+        ? limits.ts_mb
+        : limits.wan_mb;
+  const zoneName =
+    detectedZone === 'lan' ? '局域网模式' : detectedZone === 'tailscale' ? 'Tailscale 模式' : '外网模式';
+  const hint = `${zoneName} · 单文件上限 ${formatLimitMB(limitMB)}`;
 
   return (
     <div className="fixed inset-0 z-50 glass-strong flex items-center justify-center p-6 pointer-events-none">

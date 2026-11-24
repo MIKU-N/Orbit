@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -111,11 +113,55 @@ func FirstNonEmpty(vals ...string) string {
 	return ""
 }
 
+func extractURLHost(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if !strings.Contains(s, "://") {
+		s = "http://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(u.Hostname()))
+}
+
+func IsTailscaleURL(raw string) bool {
+	host := extractURLHost(raw)
+	if host == "" {
+		return false
+	}
+	if strings.HasSuffix(host, ".ts.net") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip4 := ip.To4(); ip4 != nil {
+			// 100.64.0.0/10 (Tailscale CGNAT)
+			return ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127
+		}
+		// Tailscale IPv6 ULA prefix fd7a:115c:a1e0::/48
+		if len(ip) == net.IPv6len && ip[0] == 0xfd && ip[1] == 0x7a && ip[2] == 0x11 && ip[3] == 0x5c && ip[4] == 0xa1 && ip[5] == 0xe0 {
+			return true
+		}
+	}
+	return false
+}
+
 func IsLikelyLocalURL(raw string) bool {
-	l := strings.ToLower(raw)
-	return strings.Contains(l, "192.168.") ||
-		strings.Contains(l, "10.") ||
-		strings.Contains(l, "172.16.") ||
-		strings.Contains(l, "127.0.0.1") ||
-		strings.Contains(l, "localhost")
+	host := extractURLHost(raw)
+	if host == "" {
+		return false
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".lan") || strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".home.arpa") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if IsTailscaleURL(raw) {
+			return false
+		}
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	return false
 }

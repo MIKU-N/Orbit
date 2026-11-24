@@ -54,6 +54,7 @@ func Load() (*Config, error) {
 		filepath.Join(dataDir, "clips"),
 		filepath.Join(dataDir, "wallpapers"),
 		filepath.Join(dataDir, "icons"),
+		filepath.Join(dataDir, "avatars"),
 		filepath.Join(dataDir, "fonts"),
 		filepath.Join(dataDir, "plugins"),
 		filepath.Join(dataDir, "cache", "bing"),

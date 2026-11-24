@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Camera,
   Check,
   Compass,
   Copy,
@@ -7,12 +8,14 @@ import {
   Eye,
   EyeOff,
   FileUp,
+  Info,
   LayoutGrid,
   Loader2,
   Palette,
   Plug,
   RotateCcw,
   Search,
+  Sparkles,
   Trash2,
   Type as TypeIcon,
   UserCog,
@@ -25,7 +28,9 @@ import { PRESET_WALLPAPERS } from '../lib/wallpapers';
 import { useOrbitHost } from '../sdk/host';
 import { RangeField, getPluginIcon } from '../sdk/primitives';
 import type { CustomFontItem, FooterLink, ShareScopes, User, UserSettings } from '../types';
+import { AvatarEditorModal } from './AvatarEditorModal';
 import { PluginCenterPanel } from './PluginCenterPanel';
+import { UserAvatar } from './UserAvatar';
 
 interface SearchableSettingItem {
   id: string;
@@ -43,19 +48,24 @@ const STATIC_SEARCH_ITEMS: SearchableSettingItem[] = [
   { id: 's-wallpaper', tab: 'appearance', sectionId: 'sec-wallpaper', title: '壁纸与本地轮换', desc: 'Bing每日壁纸、预设渐变、本地壁纸库与定时轮换', keywords: '壁纸 背景 bing 本地 轮换 间隔 外链' },
   { id: 's-search-icon', tab: 'search', sectionId: 'sec-search-bar', title: '仅显示搜索引擎图标', desc: '隐藏搜索引擎名称文字与下拉箭头', keywords: '搜索引擎 仅图标 极简 搜索栏' },
   { id: 's-search-eng', tab: 'search', sectionId: 'sec-search-eng', title: '搜索引擎与图标自定义', desc: '新增/编辑引擎、自动抓取图标、上传图标', keywords: '引擎 google bing github 快捷键 抓取 图标' },
-  { id: 's-bm-view', tab: 'bookmarks', sectionId: 'sec-bm-view', title: '书签视图与分组', desc: '卡片/图标视图、新建分组、删除分组', keywords: '书签 分组 卡片 图标 视图' },
-  { id: 's-bm-import', tab: 'bookmarks', sectionId: 'sec-bm-import', title: '导入浏览器书签 / Sun-Panel', desc: '导入浏览器 HTML 书签并默认归为一类', keywords: '导入 浏览器 html chrome edge firefox sun-panel 书签' },
+  { id: 's-bm-view', tab: 'bookmarks', sectionId: 'sec-bm-view', title: '书签视图与分组', desc: '卡片/图标视图、新建分组、重命名与删除分组', keywords: '书签 分组 卡片 图标 视图 重命名' },
+  { id: 's-bm-list', tab: 'bookmarks', sectionId: 'sec-bm-list', title: '书签列表、编辑与批量删除', desc: '展开查看书签、搜索筛选、新增/编辑、移动分组与批量删除', keywords: '书签 列表 编辑 修改 删除 批量 多选 移动' },
+  { id: 's-bm-import', tab: 'bookmarks', sectionId: 'sec-bm-import', title: '导入浏览器书签 / Sun-Panel', desc: '导入浏览器 HTML 书签与 Sun-Panel JSON 配置', keywords: '导入 浏览器 html chrome edge firefox sun-panel json 书签' },
   { id: 's-weather-loc', tab: 'weather', sectionId: 'sec-weather-loc', title: '天气地区选择（支持到区）', desc: '按区/县搜索或自定义显示地名与经纬度', keywords: '天气 地区 区县 城市 经纬度 刷新' },
-  { id: 's-weather-fld', tab: 'weather', sectionId: 'sec-weather-fld', title: '天气单位与显示字段', desc: '°C/°F、体感、湿度、风速、降水、气压、多日预报', keywords: '温度 体感 湿度 风速 降水 气压 预报' },
+  { id: 's-weather-fld', tab: 'weather', sectionId: 'sec-weather-fld', title: '天气样式、自定义文案与字段', desc: '经典预报/文案时钟样式、自定义文案、°C/°F、体感、湿度、风速', keywords: '温度 体感 湿度 风速 降水 气压 预报 样式 自定义 文案 时钟' },
+  { id: 's-hitokoto-src', tab: 'hitokoto', sectionId: 'sec-hitokoto-src', title: '一言来源与 API 设置', desc: '在线一言 API、分类筛选、自定义接口与内置精选文案', keywords: '一言 hitokoto 语录 文案 api 分类 内置' },
+  { id: 's-hitokoto-play', tab: 'hitokoto', sectionId: 'sec-hitokoto-play', title: '一言轮播与自定义文案', desc: '自动轮播间隔、对齐方式、作者显示与自定义补充语录', keywords: '一言 轮播 刷新 间隔 自定义 文案 语录' },
   { id: 's-mon-hdr', tab: 'monitor', sectionId: 'sec-mon-hdr', title: '系统监控卡片与磁盘挂载点', desc: '自定义标题、实时网速、折线图、内网IP、挂载点', keywords: '监控 系统 磁盘 挂载点 网速 ip 折线图 标题' },
   { id: 's-mon-met', tab: 'monitor', sectionId: 'sec-mon-met', title: '监控指标勾选与排序', desc: 'CPU、内存、存储、Swap、负载、时长、温度、进程、Orbit、总流量', keywords: 'cpu 内存 swap 负载 温度 进程 流量 指标 排序 刷新间隔' },
   { id: 's-layout-vis', tab: 'layout', sectionId: 'sec-layout-vis', title: '桌面组件显示与自由排版', desc: '开关各插件桌面卡片、自由拖拽、秒数', keywords: '布局 拖拽 时钟 秒数 重置 组件 显示 插件' },
   { id: 's-footer', tab: 'layout', sectionId: 'sec-footer', title: '自定义页脚', desc: '页脚文字、对齐方式、毛玻璃胶囊背景、链接列表', keywords: '页脚 底部 footer 版权 链接 胶囊 对齐' },
   { id: 's-plugins-builtin', tab: 'plugins', sectionId: 'sec-plugins-builtin', title: '插件中心 · 官方标准插件', desc: '启用或禁用时钟、搜索、天气、书签、监控、剪贴板、快传插件', keywords: '插件 内置 官方 启用 禁用 启停 模块' },
   { id: 's-plugins-ext', tab: 'plugins', sectionId: 'sec-plugins-external', title: '外部轻量扩展插件与 .zip 安装', desc: '上传 .zip、安装示例扩展、配置直连代理与重载', keywords: '外部 插件 扩展 zip manifest proxy kv iframe esm 安装 卸载' },
+  { id: 's-avatar', tab: 'account', sectionId: 'sec-account-self', title: '用户头像上传与裁剪编辑', desc: '上传自定义头像，支持拖动、缩放、旋转与翻转裁剪', keywords: '头像 avatar 上传 裁剪 编辑 图片 个人资料' },
   { id: 's-pass', tab: 'account', sectionId: 'sec-account-self', title: '修改密码与 API Token', desc: '密码修改、Token 复制与重置', keywords: '密码 token 账号 安全' },
   { id: 's-guest', tab: 'account', sectionId: 'sec-account-guest', title: '游客访问模式', desc: '允许未登录游客查看公开基础插件', keywords: '游客 访客 未登录 guest 访问权限' },
   { id: 's-subuser', tab: 'account', sectionId: 'sec-account-users', title: '子账号与数据共享管理', desc: '创建子账号、按插件权限声明共享数据', keywords: '子账号 成员 共享 权限 隔离 管理员' },
+  { id: 's-about', tab: 'about', sectionId: 'sec-about', title: '关于 Orbit · 星轨', desc: '项目简介、核心特性、开源协议与 GitHub 仓库地址', keywords: '关于 about 项目 介绍 地址 github 仓库 开源 协议 版本 license' },
 ];
 
 const BASE_EMPTY_SHARES: ShareScopes = {
@@ -88,6 +98,8 @@ export function SettingsModal() {
     onDeleteLocalWallpaper,
     copyText,
     rotateToken: onRotateToken,
+    uploadAvatar,
+    deleteAvatar,
     toast: onToast,
   } = host;
 
@@ -117,6 +129,10 @@ export function SettingsModal() {
   const [createRole, setCreateRole] = useState<'user' | 'admin'>('user');
   const [createShares, setCreateShares] = useState<ShareScopes>(BASE_EMPTY_SHARES);
   const [creatingUser, setCreatingUser] = useState(false);
+  const [avatarDraftFile, setAvatarDraftFile] = useState<File | null>(null);
+  const [avatarEditorOpen, setAvatarEditorOpen] = useState(false);
+  const [removingAvatar, setRemovingAvatar] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const visiblePluginTabs = useMemo(
     () =>
@@ -135,6 +151,7 @@ export function SettingsModal() {
       { id: 'layout', label: '布局页脚', icon: <LayoutGrid className="w-4 h-4" /> },
       { id: 'plugins', label: '插件中心', icon: <Plug className="w-4 h-4" /> },
       { id: 'account', label: '账号权限', icon: <UserCog className="w-4 h-4" /> },
+      { id: 'about', label: '关于', icon: <Info className="w-4 h-4" /> },
     ];
     return items;
   }, [visiblePluginTabs]);
@@ -1175,18 +1192,76 @@ export function SettingsModal() {
             {tab === 'account' && (
               <>
                 <section data-section="sec-account-self" style={sectionHighlightStyle('sec-account-self')} className="space-y-3">
-                  <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-                    <span
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-white font-semibold text-sm shrink-0"
-                      style={{ background: 'var(--brand-solid)' }}
-                    >
-                      {(user.username?.[0] || 'O').toUpperCase()}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold">{user.username}</div>
-                      <div className="font-mono" style={{ color: 'var(--ink-muted)' }}>
-                        {user.role === 'admin' ? '管理员 (Admin)' : '子账号 (Sub-account)'} · JWT 会话
+                  <div className="flex items-center justify-between gap-3 flex-wrap p-3 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => avatarInputRef.current?.click()}
+                        className="relative group rounded-full cursor-pointer shrink-0"
+                        title="点击上传并编辑头像"
+                      >
+                        <UserAvatar user={user} sizeClass="w-12 h-12" textClass="text-base" />
+                        <span className="absolute inset-0 rounded-full bg-black/45 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
+                          <Camera className="w-4 h-4" />
+                        </span>
+                      </button>
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate">{user.username}</div>
+                        <div className="font-mono" style={{ color: 'var(--ink-muted)' }}>
+                          {user.role === 'admin' ? '管理员 (Admin)' : '子账号 (Sub-account)'} · JWT 会话
+                        </div>
                       </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input
+                        ref={avatarInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        className="hidden"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            setAvatarDraftFile(f);
+                            setAvatarEditorOpen(true);
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => avatarInputRef.current?.click()}
+                        className="px-3 h-8 rounded-lg flex items-center gap-1.5 font-medium text-white cursor-pointer"
+                        style={{ background: 'var(--brand-solid)' }}
+                      >
+                        <Camera className="w-3.5 h-3.5" />
+                        <span>{user.avatar ? '更换头像' : '上传头像'}</span>
+                      </button>
+                      {user.avatar && (
+                        <button
+                          type="button"
+                          disabled={removingAvatar}
+                          onClick={async () => {
+                            setRemovingAvatar(true);
+                            try {
+                              await deleteAvatar();
+                              setUsersList((prev) =>
+                                prev.map((item) =>
+                                  item.id === user.id ? { ...item, avatar: '' } : item,
+                                ),
+                              );
+                            } catch (e) {
+                              onToast((e as Error).message || '重置头像失败', true);
+                            } finally {
+                              setRemovingAvatar(false);
+                            }
+                          }}
+                          className="px-2.5 h-8 rounded-lg cursor-pointer disabled:opacity-50"
+                          style={{ background: 'var(--pill-hover)', color: 'var(--ink-muted)' }}
+                        >
+                          恢复默认
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1357,12 +1432,7 @@ export function SettingsModal() {
                             >
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <span
-                                    className="w-6 h-6 rounded-full flex items-center justify-center text-white font-semibold shrink-0"
-                                    style={{ background: 'var(--brand-solid)' }}
-                                  >
-                                    {(u.username?.[0] || 'U').toUpperCase()}
-                                  </span>
+                                  <UserAvatar user={u} sizeClass="w-6 h-6" textClass="text-[11px]" />
                                   <span className="font-medium truncate">{u.username}</span>
                                   <span className="kbd-chip shrink-0">
                                     {u.role === 'admin' ? '管理员' : '子账号'}
@@ -1499,9 +1569,192 @@ export function SettingsModal() {
                 )}
               </>
             )}
+
+            {tab === 'about' && (
+              <section
+                data-section="sec-about"
+                style={sectionHighlightStyle('sec-about')}
+                className="space-y-4"
+              >
+                <div
+                  className="p-4 rounded-2xl flex flex-col sm:flex-row items-center sm:items-start gap-4"
+                  style={{ background: 'var(--pill-bg)', border: '1px solid var(--glass-border)' }}
+                >
+                  <img
+                    src="/apple-touch-icon.png"
+                    alt="Orbit · 星轨 Logo"
+                    className="w-16 h-16 rounded-2xl shrink-0 shadow-md"
+                  />
+                  <div className="min-w-0 flex-1 text-center sm:text-left space-y-1.5">
+                    <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
+                      <h3 className="text-base font-semibold">Orbit · 星轨</h3>
+                      <span className="kbd-chip font-mono">Apache-2.0</span>
+                      <span className="kbd-chip font-mono">Go + SQLite · React</span>
+                    </div>
+                    <div className="font-medium" style={{ color: 'var(--brand)' }}>
+                      极轻量自托管个人轨道与桌面工作台
+                    </div>
+                    <p className="leading-relaxed" style={{ color: 'var(--ink-muted)' }}>
+                      Orbit 是一款面向个人服务器、NAS 与家庭实验室的自托管轻量主页与跨端协作工作台。后端采用
+                      Go 与纯 Go SQLite 驱动，前端内嵌于单一静态二进制文件中，无需外部数据库依赖，日常运行内存仅约
+                      10–25 MB。
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="font-medium text-sm flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4" style={{ color: 'var(--brand)' }} />
+                    <span>核心特性</span>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {[
+                      {
+                        title: '微内核与双层插件架构',
+                        desc: '内置 8 个可独立启停的官方插件，并支持上传外部 .zip 沙箱扩展微件与内网代理。',
+                      },
+                      {
+                        title: '三网自适应路由书签',
+                        desc: '同时配置 LAN / Tailscale / WAN 三套地址自动路由，支持浏览器 HTML 与 Sun-Panel 导入。',
+                      },
+                      {
+                        title: '实时跨端云剪贴板',
+                        desc: '基于 WebSocket 多端毫秒级同步文本与截图，支持 API Token 终端一键推送。',
+                      },
+                      {
+                        title: 'P2P 快传与暂存箱',
+                        desc: '同局域网浏览器支持 WebRTC P2P 直传，外网自动限额暂存并提供 6 位阅后即焚取件码。',
+                      },
+                      {
+                        title: '节点监控与实时天气',
+                        desc: '宿主机 CPU / 内存 / 磁盘 / 温度 / 网速遥测，以及精确到区县的多日天气预报。',
+                      },
+                      {
+                        title: '自由毛玻璃桌面与多账号',
+                        desc: '桌面组件自由拖拽排版、全局圆角字体壁纸定制、访客模式与子账号细粒度数据共享。',
+                      },
+                    ].map((feat) => (
+                      <div
+                        key={feat.title}
+                        className="p-3 rounded-xl space-y-1"
+                        style={{ background: 'var(--pill-bg)', border: '1px solid var(--glass-border)' }}
+                      >
+                        <div className="font-medium">{feat.title}</div>
+                        <div className="leading-relaxed" style={{ color: 'var(--ink-muted)' }}>
+                          {feat.desc}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div
+                  className="space-y-2.5 pt-4 border-t"
+                  style={{ borderColor: 'var(--glass-border)' }}
+                >
+                  <div className="font-medium text-sm">项目地址与相关链接</div>
+                  <div className="space-y-1.5">
+                    <div
+                      className="p-3 rounded-xl flex items-center justify-between gap-2 flex-wrap"
+                      style={{ background: 'var(--pill-bg)', border: '1px solid var(--glass-border)' }}
+                    >
+                      <div className="min-w-0">
+                        <div className="font-medium">GitHub 项目仓库</div>
+                        <a
+                          href="https://github.com/MIKU-N/Orbit"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-mono hover:underline break-all"
+                          style={{ color: 'var(--brand)' }}
+                        >
+                          https://github.com/MIKU-N/Orbit
+                        </a>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => copyText('https://github.com/MIKU-N/Orbit', '已复制项目地址')}
+                          className="px-2.5 h-7 rounded-lg flex items-center gap-1 cursor-pointer"
+                          style={{ background: 'var(--pill-hover)' }}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>复制</span>
+                        </button>
+                        <a
+                          href="https://github.com/MIKU-N/Orbit"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 h-7 rounded-lg text-white font-medium flex items-center gap-1"
+                          style={{ background: 'var(--brand-solid)' }}
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>访问仓库</span>
+                        </a>
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-3 gap-2">
+                      {[
+                        {
+                          label: '问题反馈 (Issues)',
+                          url: 'https://github.com/MIKU-N/Orbit/issues',
+                          sub: '提交 Bug 或功能建议',
+                        },
+                        {
+                          label: 'Docker 镜像 (GHCR)',
+                          url: 'https://github.com/MIKU-N/Orbit/pkgs/container/orbit',
+                          sub: 'amd64 / arm64 多架构镜像',
+                        },
+                        {
+                          label: '开源协议 (License)',
+                          url: 'https://github.com/MIKU-N/Orbit/blob/main/LICENSE',
+                          sub: 'Apache License 2.0',
+                        },
+                      ].map((link) => (
+                        <a
+                          key={link.url}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2.5 rounded-xl flex items-center justify-between gap-2 hover:bg-white/10 transition-colors"
+                          style={{ background: 'var(--pill-bg)', border: '1px solid var(--glass-border)' }}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{link.label}</div>
+                            <div className="truncate" style={{ color: 'var(--ink-muted)' }}>
+                              {link.sub}
+                            </div>
+                          </div>
+                          <ExternalLink className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
           </div>
         </div>
       </div>
+
+      <AvatarEditorModal
+        open={avatarEditorOpen}
+        initialFile={avatarDraftFile}
+        onClose={() => {
+          setAvatarEditorOpen(false);
+          setAvatarDraftFile(null);
+        }}
+        onSave={async (file) => {
+          await uploadAvatar(file);
+          if (user.role === 'admin') {
+            void api
+              .listUsers()
+              .then((res) => setUsersList(res.users))
+              .catch(() => {});
+          }
+        }}
+        onToast={onToast}
+      />
     </div>
   );
 }

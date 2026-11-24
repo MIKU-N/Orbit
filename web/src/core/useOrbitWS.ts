@@ -1,19 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PeerInfo } from '../types';
+import type { ClipItem, PeerInfo, StagedFile } from '../types';
 import { OrbitP2PManager, type TransferProgress } from '../lib/webrtc';
+
+export interface P2PCompleteInfo {
+  direction: 'send' | 'receive';
+  fileName: string;
+  sizeBytes: number;
+  speedBps: number;
+}
 
 interface UseOrbitWSProps {
   enabled: boolean;
-  onClipsChanged: () => void;
-  onFilesChanged: () => void;
-  onToast: (msg: string, warn?: boolean) => void;
+  onClipsChanged: (event?: { action?: string; id?: number; clip?: ClipItem }) => void;
+  onFilesChanged: (event?: { action?: string; id?: number; file?: StagedFile }) => void;
+  onP2PComplete: (info: P2PCompleteInfo) => void;
 }
 
 export function useOrbitWS({
   enabled,
   onClipsChanged,
   onFilesChanged,
-  onToast,
+  onP2PComplete,
 }: UseOrbitWSProps) {
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [selfPeerId, setSelfPeerId] = useState<string>('');
@@ -22,8 +29,8 @@ export function useOrbitWS({
 
   const wsRef = useRef<WebSocket | null>(null);
   const p2pRef = useRef<OrbitP2PManager | null>(null);
-  const callbacksRef = useRef({ onClipsChanged, onFilesChanged, onToast });
-  callbacksRef.current = { onClipsChanged, onFilesChanged, onToast };
+  const callbacksRef = useRef({ onClipsChanged, onFilesChanged, onP2PComplete });
+  callbacksRef.current = { onClipsChanged, onFilesChanged, onP2PComplete };
 
   useEffect(() => {
     if (!enabled) {
@@ -51,7 +58,7 @@ export function useOrbitWS({
     const p2p = new OrbitP2PManager(
       sendSignal,
       (prog) => setP2pProgress(prog),
-      (msg) => callbacksRef.current.onToast(msg),
+      (info) => callbacksRef.current.onP2PComplete(info),
     );
     p2pRef.current = p2p;
 
@@ -75,10 +82,10 @@ export function useOrbitWS({
               setPeers(Array.isArray(msg.payload?.peers) ? msg.payload.peers : []);
               break;
             case 'clip_updated':
-              callbacksRef.current.onClipsChanged();
+              callbacksRef.current.onClipsChanged(msg.payload);
               break;
             case 'files_updated':
-              callbacksRef.current.onFilesChanged();
+              callbacksRef.current.onFilesChanged(msg.payload);
               break;
             case 'rtc_signal':
               if (msg.from_peer_id) {

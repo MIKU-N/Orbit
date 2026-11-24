@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func (p *Plugin) Manifest() plugin.Manifest {
 				TabID:          "bookmarks",
 				Label:          "书签管理",
 				Icon:           "bookmark",
-				SearchKeywords: []string{"书签", "分组", "导入", "浏览器", "html", "sun-panel", "卡片视图", "图标视图"},
+				SearchKeywords: []string{"书签", "分组", "导入", "浏览器", "html", "sun-panel", "卡片视图", "图标视图", "批量删除", "编辑", "列表"},
 			},
 			SearchProvider: &plugin.SearchProviderContrib{
 				Enabled:  true,
@@ -75,10 +76,13 @@ func (p *Plugin) Init(host plugin.Host) error {
 func (p *Plugin) RegisterRoutes(r plugin.RouteGroup) {
 	r.HandleAuth("GET /groups", p.handleListGroups)
 	r.HandleAuth("POST /groups", p.handleCreateGroup)
+	r.HandleAuth("PUT /groups/{id}", p.handleUpdateGroup)
 	r.HandleAuth("DELETE /groups/{id}", p.handleDeleteGroup)
 	r.HandleAuth("GET /bookmarks", p.handleListBookmarks)
 	r.HandleAuth("POST /bookmarks", p.handleCreateBookmark)
 	r.HandleAuth("PUT /bookmarks/reorder", p.handleReorderBookmarks)
+	r.HandleAuth("POST /bookmarks/batch-delete", p.handleBatchDeleteBookmarks)
+	r.HandleAuth("POST /bookmarks/batch-move", p.handleBatchMoveBookmarks)
 	r.HandleAuth("PUT /bookmarks/{id}", p.handleUpdateBookmark)
 	r.HandleAuth("DELETE /bookmarks/{id}", p.handleDeleteBookmark)
 	r.HandleAuth("POST /import/sunpanel", p.handleImportSunPanel)
@@ -87,10 +91,13 @@ func (p *Plugin) RegisterRoutes(r plugin.RouteGroup) {
 	// Compat routes
 	r.HandleCompat("GET /api/groups", p.handleListGroups, true)
 	r.HandleCompat("POST /api/groups", p.handleCreateGroup, true)
+	r.HandleCompat("PUT /api/groups/{id}", p.handleUpdateGroup, true)
 	r.HandleCompat("DELETE /api/groups/{id}", p.handleDeleteGroup, true)
 	r.HandleCompat("GET /api/bookmarks", p.handleListBookmarks, true)
 	r.HandleCompat("POST /api/bookmarks", p.handleCreateBookmark, true)
 	r.HandleCompat("PUT /api/bookmarks/reorder", p.handleReorderBookmarks, true)
+	r.HandleCompat("POST /api/bookmarks/batch-delete", p.handleBatchDeleteBookmarks, true)
+	r.HandleCompat("POST /api/bookmarks/batch-move", p.handleBatchMoveBookmarks, true)
 	r.HandleCompat("PUT /api/bookmarks/{id}", p.handleUpdateBookmark, true)
 	r.HandleCompat("DELETE /api/bookmarks/{id}", p.handleDeleteBookmark, true)
 	r.HandleCompat("POST /api/bookmarks/import/sunpanel", p.handleImportSunPanel, true)
@@ -164,6 +171,37 @@ func (p *Plugin) handleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	plugin.WriteJSON(w, http.StatusCreated, map[string]any{
 		"group": db.Group{ID: id, UserID: u.ID, Name: req.Name, SortOrder: maxOrder + 1, CreatedAt: now},
 	})
+}
+
+func (p *Plugin) handleUpdateGroup(w http.ResponseWriter, r *http.Request) {
+	u := p.host.Auth().CurrentUser(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		plugin.WriteErr(w, http.StatusBadRequest, "invalid group id")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := plugin.DecodeJSON(r, &req); err != nil {
+		plugin.WriteErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		plugin.WriteErr(w, http.StatusBadRequest, "group name required")
+		return
+	}
+	res, err := p.host.DB().Exec(`UPDATE groups SET name = ? WHERE id = ? AND user_id = ?`, req.Name, id, u.ID)
+	if err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	if aff, _ := res.RowsAffected(); aff == 0 {
+		plugin.WriteErr(w, http.StatusNotFound, "group not found")
+		return
+	}
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id, "name": req.Name})
 }
 
 func (p *Plugin) handleDeleteGroup(w http.ResponseWriter, r *http.Request) {
@@ -390,6 +428,102 @@ func (p *Plugin) handleDeleteBookmark(w http.ResponseWriter, r *http.Request) {
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (p *Plugin) handleBatchDeleteBookmarks(w http.ResponseWriter, r *http.Request) {
+	u := p.host.Auth().CurrentUser(r)
+	var req struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := plugin.DecodeJSON(r, &req); err != nil {
+		plugin.WriteErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+
+	seen := make(map[int64]struct{}, len(req.IDs))
+	ids := make([]int64, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		if id > 0 {
+			if _, ok := seen[id]; !ok {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		plugin.WriteErr(w, http.StatusBadRequest, "请选择要删除的书签")
+		return
+	}
+
+	tx, err := p.host.DB().Begin()
+	if err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback()
+
+	var deleted int64
+	for _, id := range ids {
+		res, err := tx.Exec(`DELETE FROM bookmarks WHERE id = ? AND user_id = ?`, id, u.ID)
+		if err != nil {
+			plugin.WriteErr(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		aff, _ := res.RowsAffected()
+		deleted += aff
+	}
+	if err := tx.Commit(); err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
+}
+
+func (p *Plugin) handleBatchMoveBookmarks(w http.ResponseWriter, r *http.Request) {
+	u := p.host.Auth().CurrentUser(r)
+	var req struct {
+		IDs     []int64 `json:"ids"`
+		GroupID int64   `json:"group_id"`
+	}
+	if err := plugin.DecodeJSON(r, &req); err != nil {
+		plugin.WriteErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if len(req.IDs) == 0 || req.GroupID <= 0 {
+		plugin.WriteErr(w, http.StatusBadRequest, "invalid bookmark ids or group_id")
+		return
+	}
+	var exists int64
+	if err := p.host.DB().QueryRow(`SELECT id FROM groups WHERE id = ? AND user_id = ?`, req.GroupID, u.ID).Scan(&exists); err != nil {
+		plugin.WriteErr(w, http.StatusBadRequest, "目标分组不存在")
+		return
+	}
+
+	tx, err := p.host.DB().Begin()
+	if err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer tx.Rollback()
+
+	var moved int64
+	for _, id := range req.IDs {
+		if id <= 0 {
+			continue
+		}
+		res, err := tx.Exec(`UPDATE bookmarks SET group_id = ? WHERE id = ? AND user_id = ?`, req.GroupID, id, u.ID)
+		if err != nil {
+			plugin.WriteErr(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		aff, _ := res.RowsAffected()
+		moved += aff
+	}
+	if err := tx.Commit(); err != nil {
+		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "moved": moved})
+}
+
 func (p *Plugin) handleReorderBookmarks(w http.ResponseWriter, r *http.Request) {
 	u := p.host.Auth().CurrentUser(r)
 	var req struct {
@@ -419,6 +553,120 @@ func (p *Plugin) handleReorderBookmarks(w http.ResponseWriter, r *http.Request) 
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+type rawSunIcon struct {
+	ItemType        int    `json:"itemType"`
+	Src             string `json:"src"`
+	Text            string `json:"text"`
+	BackgroundColor string `json:"backgroundColor"`
+}
+
+type rawSunNode struct {
+	Title           string          `json:"title"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description"`
+	Desc            string          `json:"desc"`
+	URL             string          `json:"url"`
+	LanURL          string          `json:"lanUrl"`
+	LanURLSnake     string          `json:"lan_url"`
+	WanURL          string          `json:"wanUrl"`
+	WanURLSnake     string          `json:"wan_url"`
+	TsURL           string          `json:"tsUrl"`
+	TsURLSnake      string          `json:"ts_url"`
+	Group           string          `json:"group"`
+	GroupName       string          `json:"groupName"`
+	Sort            int             `json:"sort"`
+	BackgroundColor string          `json:"backgroundColor"`
+	Icon            json.RawMessage `json:"icon"`
+	Items           []rawSunNode    `json:"items"`
+	Children        []rawSunNode    `json:"children"`
+	Icons           []rawSunNode    `json:"icons"`
+}
+
+func normalizeHexColor(raw string) string {
+	s := strings.TrimSpace(raw)
+	if !strings.HasPrefix(s, "#") {
+		return ""
+	}
+	hexPart := s[1:]
+	if len(hexPart) == 3 {
+		for i := 0; i < 3; i++ {
+			if !isHexChar(hexPart[i]) {
+				return ""
+			}
+		}
+		return strings.ToLower("#" + string([]byte{hexPart[0], hexPart[0], hexPart[1], hexPart[1], hexPart[2], hexPart[2]}))
+	}
+	if len(hexPart) == 6 {
+		for i := 0; i < 6; i++ {
+			if !isHexChar(hexPart[i]) {
+				return ""
+			}
+		}
+		return strings.ToLower(s)
+	}
+	return ""
+}
+
+func isHexChar(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func isUsableIconSrc(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return false
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return true
+	}
+	if strings.HasPrefix(lower, "data:image/") && len(s) <= 65536 {
+		return true
+	}
+	return false
+}
+
+func parseSunIconAndColor(rawIcon json.RawMessage, itemBg string) (string, string) {
+	iconVal := "globe"
+	colorVal := "#6366f1"
+
+	trimmed := strings.TrimSpace(string(rawIcon))
+	if trimmed != "" && trimmed != "null" {
+		var iconStr string
+		if err := json.Unmarshal(rawIcon, &iconStr); err == nil {
+			if isUsableIconSrc(iconStr) {
+				iconVal = strings.TrimSpace(iconStr)
+			}
+		} else {
+			var obj rawSunIcon
+			if err := json.Unmarshal(rawIcon, &obj); err == nil {
+				if c := normalizeHexColor(obj.BackgroundColor); c != "" {
+					colorVal = c
+				}
+				switch obj.ItemType {
+				case 1:
+					if t := strings.TrimSpace(obj.Text); t != "" {
+						iconVal = "text:" + t
+					}
+				default:
+					if isUsableIconSrc(obj.Src) {
+						iconVal = strings.TrimSpace(obj.Src)
+					} else if t := strings.TrimSpace(obj.Text); t != "" {
+						iconVal = "text:" + t
+					}
+				}
+			}
+		}
+	}
+
+	if colorVal == "#6366f1" {
+		if c := normalizeHexColor(itemBg); c != "" {
+			colorVal = c
+		}
+	}
+	return iconVal, colorVal
+}
+
 func (p *Plugin) handleImportSunPanel(w http.ResponseWriter, r *http.Request) {
 	u := p.host.Auth().CurrentUser(r)
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
@@ -427,49 +675,63 @@ func (p *Plugin) handleImportSunPanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type rawItem struct {
-		Title       string `json:"title"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Desc        string `json:"desc"`
-		URL         string `json:"url"`
-		LanURL      string `json:"lanUrl"`
-		LanURLSnake string `json:"lan_url"`
-		WanURL      string `json:"wanUrl"`
-		Group       string `json:"group"`
-		GroupName   string `json:"groupName"`
+	cleaned := strings.TrimSpace(strings.TrimPrefix(string(raw), "\ufeff"))
+	if cleaned == "" {
+		plugin.WriteErr(w, http.StatusBadRequest, "JSON 内容不能为空")
+		return
 	}
-	type rawGroup struct {
-		Title    string    `json:"title"`
-		Name     string    `json:"name"`
-		Items    []rawItem `json:"items"`
-		Children []rawItem `json:"children"`
-		Icons    []rawItem `json:"icons"`
-	}
-	var wrapped struct {
-		Icons  []rawItem  `json:"icons"`
-		Items  []rawItem  `json:"items"`
-		Groups []rawGroup `json:"groups"`
+	rawBytes := []byte(cleaned)
+
+	var roots []rawSunNode
+	var parseContainer func(data []byte) error
+	parseContainer = func(data []byte) error {
+		t := strings.TrimSpace(string(data))
+		if t == "" || t == "null" {
+			return nil
+		}
+		if strings.HasPrefix(t, "[") {
+			var arr []rawSunNode
+			if err := json.Unmarshal(data, &arr); err != nil {
+				return err
+			}
+			roots = append(roots, arr...)
+			return nil
+		}
+		if strings.HasPrefix(t, "{") {
+			var wrapped struct {
+				Groups   []rawSunNode    `json:"groups"`
+				Icons    []rawSunNode    `json:"icons"`
+				Items    []rawSunNode    `json:"items"`
+				Children []rawSunNode    `json:"children"`
+				Data     json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(data, &wrapped); err != nil {
+				return err
+			}
+			roots = append(roots, wrapped.Groups...)
+			roots = append(roots, wrapped.Icons...)
+			roots = append(roots, wrapped.Items...)
+			roots = append(roots, wrapped.Children...)
+			if len(wrapped.Data) > 0 && strings.TrimSpace(string(wrapped.Data)) != "null" {
+				if err := parseContainer(wrapped.Data); err != nil {
+					return err
+				}
+			}
+			// Fallback: single bookmark/group object directly
+			if len(roots) == 0 {
+				var single rawSunNode
+				if err := json.Unmarshal(data, &single); err == nil && (single.Title != "" || single.Name != "") {
+					roots = append(roots, single)
+				}
+			}
+			return nil
+		}
+		return json.Unmarshal(data, &roots)
 	}
 
-	var flatItems []rawItem
-	var grouped []rawGroup
-	trimmed := strings.TrimSpace(string(raw))
-	if strings.HasPrefix(trimmed, "[") {
-		if err := json.Unmarshal(raw, &grouped); err == nil && len(grouped) > 0 && (len(grouped[0].Items) > 0 || len(grouped[0].Children) > 0 || len(grouped[0].Icons) > 0) {
-			// grouped array
-		} else if err := json.Unmarshal(raw, &flatItems); err != nil {
-			plugin.WriteErr(w, http.StatusBadRequest, "unrecognized Sun-Panel JSON array")
-			return
-		}
-	} else {
-		if err := json.Unmarshal(raw, &wrapped); err != nil {
-			plugin.WriteErr(w, http.StatusBadRequest, "invalid JSON")
-			return
-		}
-		grouped = append(grouped, wrapped.Groups...)
-		flatItems = append(flatItems, wrapped.Icons...)
-		flatItems = append(flatItems, wrapped.Items...)
+	if err := parseContainer(rawBytes); err != nil {
+		plugin.WriteErr(w, http.StatusBadRequest, "无法解析 Sun-Panel JSON，请检查文件内容是否完整")
+		return
 	}
 
 	imported := 0
@@ -477,47 +739,80 @@ func (p *Plugin) handleImportSunPanel(w http.ResponseWriter, r *http.Request) {
 	_ = p.host.DB().QueryRow(`SELECT COALESCE(MAX(sort_order), -1) FROM bookmarks WHERE user_id = ?`, u.ID).Scan(&maxOrder)
 	now := time.Now().UTC()
 
-	insertItem := func(groupName string, it rawItem) {
+	insertLeaf := func(groupName string, it rawSunNode) {
 		title := plugin.FirstNonEmpty(it.Title, it.Name)
 		if title == "" {
 			return
 		}
+		lanURL := plugin.FirstNonEmpty(it.LanURL, it.LanURLSnake)
+		tsURL := plugin.FirstNonEmpty(it.TsURL, it.TsURLSnake)
+		wanURL := plugin.FirstNonEmpty(it.WanURL, it.WanURLSnake, it.URL)
+
+		if wanURL != "" {
+			if plugin.IsLikelyLocalURL(wanURL) {
+				if lanURL == "" {
+					lanURL = wanURL
+				}
+				wanURL = ""
+			} else if plugin.IsTailscaleURL(wanURL) {
+				if tsURL == "" {
+					tsURL = wanURL
+				}
+				wanURL = ""
+			}
+		}
+		if lanURL != "" && tsURL == "" && plugin.IsTailscaleURL(lanURL) {
+			tsURL = lanURL
+			lanURL = ""
+		}
+		if lanURL == "" && tsURL == "" && wanURL == "" {
+			return
+		}
+
 		gName := plugin.FirstNonEmpty(groupName, it.Group, it.GroupName, "导入书签")
 		gid, err := p.findOrCreateGroupByName(u.ID, gName)
 		if err != nil {
 			return
 		}
-		lanURL := plugin.FirstNonEmpty(it.LanURL, it.LanURLSnake)
-		wanURL := plugin.FirstNonEmpty(it.WanURL, it.URL)
-		if lanURL == "" && wanURL != "" && plugin.IsLikelyLocalURL(wanURL) {
-			lanURL = wanURL
-			wanURL = ""
-		}
+
 		desc := plugin.FirstNonEmpty(it.Description, it.Desc)
+		iconVal, colorVal := parseSunIconAndColor(it.Icon, it.BackgroundColor)
 		maxOrder++
 		if _, err := p.host.DB().Exec(
 			`INSERT INTO bookmarks (user_id, group_id, title, description, lan_url, ts_url, wan_url, icon, color, sort_order, created_at)
-			 VALUES (?, ?, ?, ?, ?, '', ?, 'globe', '#6366f1', ?, ?)`,
-			u.ID, gid, title, desc, lanURL, wanURL, maxOrder, now,
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			u.ID, gid, title, desc, lanURL, tsURL, wanURL, iconVal, colorVal, maxOrder, now,
 		); err == nil {
 			imported++
 		}
 	}
 
-	for _, g := range grouped {
-		gName := plugin.FirstNonEmpty(g.Title, g.Name)
-		for _, it := range g.Items {
-			insertItem(gName, it)
+	var walkNodes func(nodes []rawSunNode, parentGroup string)
+	walkNodes = func(nodes []rawSunNode, parentGroup string) {
+		if len(nodes) == 0 {
+			return
 		}
-		for _, it := range g.Children {
-			insertItem(gName, it)
-		}
-		for _, it := range g.Icons {
-			insertItem(gName, it)
+		ordered := append([]rawSunNode(nil), nodes...)
+		sort.SliceStable(ordered, func(i, j int) bool {
+			return ordered[i].Sort < ordered[j].Sort
+		})
+		for _, node := range ordered {
+			hasChildren := len(node.Children) > 0 || len(node.Items) > 0 || len(node.Icons) > 0
+			if hasChildren {
+				gName := plugin.FirstNonEmpty(node.Title, node.Name, parentGroup)
+				walkNodes(node.Children, gName)
+				walkNodes(node.Items, gName)
+				walkNodes(node.Icons, gName)
+				continue
+			}
+			insertLeaf(parentGroup, node)
 		}
 	}
-	for _, it := range flatItems {
-		insertItem("", it)
+
+	walkNodes(roots, "")
+	if imported == 0 {
+		plugin.WriteErr(w, http.StatusBadRequest, "未在 JSON 中识别到可导入的书签条目，请确认是 Sun-Panel 导出的配置文件")
+		return
 	}
 
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{"imported": imported})

@@ -16,6 +16,7 @@ import (
 	"orbit/internal/plugins/bookmarks"
 	"orbit/internal/plugins/clipboard"
 	"orbit/internal/plugins/clock"
+	"orbit/internal/plugins/hitokoto"
 	"orbit/internal/plugins/monitor"
 	"orbit/internal/plugins/search"
 	"orbit/internal/plugins/transfer"
@@ -43,6 +44,7 @@ func main() {
 		clock.New(),
 		search.New(),
 		weather.New(),
+		hitokoto.New(),
 		bookmarks.New(),
 		monitor.New(),
 		clipboard.New(),

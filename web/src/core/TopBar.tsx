@@ -1,10 +1,12 @@
 import { Globe, Home, LogIn } from 'lucide-react';
 import { useOrbitHost } from '../sdk/host';
 import { getPluginIcon } from '../sdk/primitives';
+import { UserAvatar } from './UserAvatar';
 
 interface TopBarProps {
   snap: boolean;
   onToggleSnap: (v: boolean) => void;
+  onToggleZonePanel: () => void;
   onToggleAccount: () => void;
 }
 
@@ -24,17 +26,16 @@ function TailscaleIcon() {
   );
 }
 
-export function TopBar({ snap, onToggleSnap, onToggleAccount }: TopBarProps) {
+export function TopBar({ snap, onToggleSnap, onToggleZonePanel, onToggleAccount }: TopBarProps) {
   const host = useOrbitHost();
-  const { isGuest, zone, detectedZone, cycleZone, layoutEditing, setLayoutEditing, resetLayout, user } = host;
+  const { isGuest, zone, detectedZone, layoutEditing, setLayoutEditing, resetLayout, user } = host;
 
   const zoneMeta = {
-    lan: { label: '局域网', dot: 'var(--ok)', icon: <Home className="w-4 h-4" /> },
-    tailscale: { label: 'Tailscale', dot: 'var(--brand)', icon: <TailscaleIcon /> },
-    wan: { label: '外网', dot: 'var(--warn)', icon: <Globe className="w-4 h-4" /> },
+    lan: { label: '局域网', icon: <Home className="w-4 h-4" /> },
+    tailscale: { label: 'Tailscale', icon: <TailscaleIcon /> },
+    wan: { label: '外网', icon: <Globe className="w-4 h-4" /> },
   }[zone];
 
-  const initial = (user?.username?.[0] || 'O').toUpperCase();
   const topDrawers = host.resolvedDrawers.filter((d) => d.drawer.topBar);
 
   return (
@@ -43,15 +44,13 @@ export function TopBar({ snap, onToggleSnap, onToggleAccount }: TopBarProps) {
         <div className="h-9" aria-hidden="true" />
       ) : (
         <button
-          onClick={cycleZone}
+          id="zoneTrigger"
+          type="button"
+          onClick={onToggleZonePanel}
           className="glass rounded-full h-9 w-9 flex items-center justify-center relative hover:border-[var(--glass-border-hover)] cursor-pointer transition-transform active:scale-95"
-          title={`当前显示：${zoneMeta.label}（服务端识别：${detectedZone.toUpperCase()}，点击切换）`}
+          title={`当前显示：${zoneMeta.label}（服务端识别：${detectedZone.toUpperCase()}，点击查看状态与切换）`}
         >
           {zoneMeta.icon}
-          <span
-            className="absolute bottom-1 right-1 w-2 h-2 rounded-full ring-2 ring-black/40"
-            style={{ background: zoneMeta.dot }}
-          />
         </button>
       )}
 
@@ -90,16 +89,11 @@ export function TopBar({ snap, onToggleSnap, onToggleAccount }: TopBarProps) {
           const title = d.guestLocked
             ? `${d.drawer.title}（需要登录）`
             : `${d.drawer.title}${shortcutHint}`;
-          const dotColor =
-            d.drawer.id === 'clipboard' && !d.guestLocked && host.clips.length > 0
-              ? 'var(--brand)'
-              : d.drawer.id === 'files' && !d.guestLocked
-                ? 'var(--ok)'
-                : null;
 
           return (
             <button
               key={`${d.pluginId}:${d.drawer.id}`}
+              type="button"
               onClick={() => {
                 if (d.guestLocked) {
                   host.promptGuestLogin(d.guestPrompt || `${d.drawer.title}需要登录后使用`);
@@ -111,12 +105,6 @@ export function TopBar({ snap, onToggleSnap, onToggleAccount }: TopBarProps) {
               title={title}
             >
               {getPluginIcon(d.drawer.icon, 'w-4 h-4')}
-              {dotColor && (
-                <span
-                  className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full"
-                  style={{ background: dotColor }}
-                />
-              )}
             </button>
           );
         })}
@@ -133,16 +121,12 @@ export function TopBar({ snap, onToggleSnap, onToggleAccount }: TopBarProps) {
         ) : (
           <button
             id="accountTrigger"
+            type="button"
             onClick={onToggleAccount}
             className="glass rounded-full h-9 w-9 flex items-center justify-center hover:border-[var(--glass-border-hover)] cursor-pointer transition-transform active:scale-95"
             title="账号与设置"
           >
-            <span
-              className="w-6 h-6 rounded-full flex items-center justify-center font-semibold text-white text-xs"
-              style={{ background: 'var(--brand-solid)' }}
-            >
-              {initial}
-            </span>
+            <UserAvatar user={user} sizeClass="w-7 h-7" textClass="text-xs" />
           </button>
         )}
       </div>

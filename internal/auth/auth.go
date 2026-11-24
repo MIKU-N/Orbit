@@ -132,9 +132,9 @@ func AuthenticateRequest(r *http.Request, conn *sql.DB, secret []byte) (*db.User
 			var u db.User
 			var scopesRaw string
 			err := conn.QueryRow(
-				`SELECT id, username, role, parent_id, share_scopes, api_token, created_at FROM users WHERE api_token = ?`,
+				`SELECT id, username, role, avatar, parent_id, share_scopes, api_token, created_at FROM users WHERE api_token = ?`,
 				token,
-			).Scan(&u.ID, &u.Username, &u.Role, &u.ParentID, &scopesRaw, &u.APIToken, &u.CreatedAt)
+			).Scan(&u.ID, &u.Username, &u.Role, &u.Avatar, &u.ParentID, &scopesRaw, &u.APIToken, &u.CreatedAt)
 			if err != nil {
 				return nil, errors.New("invalid api token")
 			}
@@ -162,9 +162,9 @@ func loadUserByID(conn *sql.DB, id int64) (*db.User, error) {
 	var u db.User
 	var scopesRaw string
 	err := conn.QueryRow(
-		`SELECT id, username, role, parent_id, share_scopes, api_token, created_at FROM users WHERE id = ?`,
+		`SELECT id, username, role, avatar, parent_id, share_scopes, api_token, created_at FROM users WHERE id = ?`,
 		id,
-	).Scan(&u.ID, &u.Username, &u.Role, &u.ParentID, &scopesRaw, &u.APIToken, &u.CreatedAt)
+	).Scan(&u.ID, &u.Username, &u.Role, &u.Avatar, &u.ParentID, &scopesRaw, &u.APIToken, &u.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

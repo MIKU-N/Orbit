@@ -62,6 +62,7 @@ export function useFreeLayout({
     const showSearch = isVis('search');
     const showW = isVis('weather');
     const showM = isVis('monitor');
+    const showHitokoto = isVis('hitokoto');
     const showBookmarks = isVis('bookmarks');
 
     const weatherW = showW && !showM
@@ -76,12 +77,14 @@ export function useFreeLayout({
         : contentW - Math.round(contentW * 0.44 - gap / 2) - gap;
     const searchW = Math.min(580, contentW);
     const clockW = Math.min(340, contentW);
+    const hitokotoW = Math.min(620, contentW);
 
     const targetWidths: Record<string, number> = {
       clock: clockW,
       search: searchW,
       weather: weatherW,
       monitor: monitorW,
+      hitokoto: hitokotoW,
       bookmarks: contentW,
     };
 
@@ -104,10 +107,11 @@ export function useFreeLayout({
     const searchH = measureH('search', 52);
     const weatherH = measureH('weather', 108);
     const monitorH = measureH('monitor', 108);
+    const hitokotoH = measureH('hitokoto', 60);
     const bookmarksH = measureH('bookmarks', 180);
 
     const extraWidgets = visibleWidgets.filter(
-      (rw) => !['clock', 'search', 'weather', 'monitor', 'bookmarks'].includes(rw.key),
+      (rw) => !['clock', 'search', 'weather', 'monitor', 'hitokoto', 'bookmarks'].includes(rw.key),
     );
     const extraHeights = extraWidgets.map((rw) => measureH(rw.key, 160));
     const extraBlockH = extraHeights.reduce((acc, h, idx) => acc + h + (idx > 0 ? 16 : 0), 0);
@@ -123,7 +127,8 @@ export function useFreeLayout({
       (showClock ? clockH : 0) +
       (showSearch ? (showClock ? 20 : 0) + searchH : 0) +
       (widgetsBlockH > 0 ? (showClock || showSearch ? 32 : 0) + widgetsBlockH : 0) +
-      (showBookmarks ? (showClock || showSearch || widgetsBlockH > 0 ? 18 : 0) + bookmarksH : 0) +
+      (showHitokoto ? (showClock || showSearch || widgetsBlockH > 0 ? 14 : 0) + hitokotoH : 0) +
+      (showBookmarks ? (showClock || showSearch || widgetsBlockH > 0 || showHitokoto ? 16 : 0) + bookmarksH : 0) +
       (extraBlockH > 0 ? 18 + extraBlockH : 0);
 
     const extra = Math.max(0, H - baseH - 48);
@@ -133,14 +138,29 @@ export function useFreeLayout({
     const searchTop = showClock ? clockTop + clockH + 20 : clockTop;
     const widgetsGap = !showBookmarks
       ? Math.max(24, Math.min(44, Math.round(24 + extra * 0.12)))
-      : Math.max(30, Math.min(96, Math.round(30 + extra * 0.38)));
+      : Math.max(26, Math.min(84, Math.round(26 + extra * 0.34)));
     const aboveWidgetsBottom = showSearch ? searchTop + searchH : showClock ? clockTop + clockH : clockTop;
     const widgetsTop = showSearch || showClock ? aboveWidgetsBottom + widgetsGap : clockTop;
     const weatherLeft = showW && !showM ? Math.round((W - weatherW) / 2) : leftEdge;
     const monitorLeft = !showW && showM ? Math.round((W - monitorW) / 2) : stacked ? leftEdge : leftEdge + weatherW + gap;
     const monitorTop = stacked && showW ? widgetsTop + weatherH + gap : widgetsTop;
-    const bookmarksTop =
+    const afterWidgetsBottom =
       widgetsBlockH > 0
+        ? widgetsTop + widgetsBlockH
+        : showSearch
+          ? searchTop + searchH
+          : showClock
+            ? clockTop + clockH
+            : clockTop;
+    const hitokotoTop =
+      widgetsBlockH > 0
+        ? afterWidgetsBottom + 14
+        : showSearch || showClock
+          ? afterWidgetsBottom + 24
+          : clockTop;
+    const bookmarksTop = showHitokoto
+      ? hitokotoTop + hitokotoH + 16
+      : widgetsBlockH > 0
         ? widgetsTop + widgetsBlockH + 18
         : showSearch
           ? searchTop + searchH + 36
@@ -161,10 +181,15 @@ export function useFreeLayout({
       search: makeBox(Math.round((W - searchW) / 2), searchTop, searchW, 15),
       weather: makeBox(weatherLeft, widgetsTop, weatherW, 12),
       monitor: makeBox(monitorLeft, monitorTop, monitorW, 12),
+      hitokoto: makeBox(Math.round((W - hitokotoW) / 2), hitokotoTop, hitokotoW, 12),
       bookmarks: makeBox(leftEdge, bookmarksTop, contentW, 13),
     };
 
-    let extraTop = showBookmarks ? bookmarksTop + bookmarksH + 18 : bookmarksTop;
+    let extraTop = showBookmarks
+      ? bookmarksTop + bookmarksH + 18
+      : showHitokoto
+        ? hitokotoTop + hitokotoH + 18
+        : bookmarksTop;
     for (let i = 0; i < extraWidgets.length; i += 1) {
       const rw = extraWidgets[i];
       const w = Math.max(rw.widget.minW || 240, Math.min(rw.widget.defaultW || 420, contentW));

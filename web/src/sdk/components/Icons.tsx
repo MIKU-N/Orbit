@@ -220,7 +220,17 @@ export function formatBytes(bytes: number): string {
 }
 
 export function formatSpeed(bps: number): string {
-  if (bps >= 1024 ** 2) return `${(bps / 1024 ** 2).toFixed(1)}M`;
-  if (bps >= 1024) return `${Math.round(bps / 1024)}K`;
-  return `${Math.round(bps)}B`;
+  if (bps >= 1024 ** 3) return `${(bps / 1024 ** 3).toFixed(2)} GB/s`;
+  if (bps >= 1024 ** 2) return `${(bps / 1024 ** 2).toFixed(1)} MB/s`;
+  if (bps >= 1024) return `${Math.round(bps / 1024)} KB/s`;
+  return `${Math.round(bps)} B/s`;
+}
+
+export function formatLimitMB(mb: number): string {
+  if (!Number.isFinite(mb) || mb <= 0) return '不限';
+  if (mb >= 1024) {
+    const gb = mb / 1024;
+    return Number.isInteger(gb) ? `${gb} GB` : `${gb.toFixed(1)} GB`;
+  }
+  return `${mb} MB`;
 }

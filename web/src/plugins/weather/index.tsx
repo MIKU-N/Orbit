@@ -9,6 +9,7 @@ function WeatherPluginWidget() {
     <WeatherWidget
       weather={host.weather}
       config={host.settings.weatherConfig}
+      showSeconds={host.settings.showSeconds}
       enableTilt={host.settings.enableTilt}
       layoutEditing={host.layoutEditing && !host.isGuest}
       readOnly={host.isGuest}
@@ -47,7 +48,7 @@ export const weatherPlugin: OrbitPlugin = {
         tabId: 'weather',
         label: '天气卡片',
         icon: 'cloud-sun',
-        searchKeywords: ['天气', '区县', '温度', '湿度', '风速', '气压', '预报'],
+        searchKeywords: ['天气', '区县', '温度', '湿度', '风速', '气压', '预报', '样式', '自定义文案', '时间'],
       },
     },
   },

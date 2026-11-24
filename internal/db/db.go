@@ -41,6 +41,8 @@ const DefaultSettingsJSON = `{
     "lat": 31.2304,
     "lon": 121.4737,
     "unit": "C",
+    "style": "standard",
+    "customText": "",
     "showFeelsLike": true,
     "showHumidity": true,
     "showWind": false,
@@ -49,6 +51,16 @@ const DefaultSettingsJSON = `{
     "showHiLo": true,
     "forecastDays": 2,
     "refreshMinutes": 30
+  },
+  "hitokotoConfig": {
+    "mode": "auto",
+    "apiUrl": "",
+    "types": ["a", "d", "i", "k"],
+    "autoRotate": true,
+    "intervalSeconds": 30,
+    "showAuthor": true,
+    "align": "center",
+    "customQuotes": []
   },
   "monitorConfig": {
     "title": "",
@@ -73,6 +85,7 @@ const DefaultSettingsJSON = `{
     "search": true,
     "weather": true,
     "monitor": true,
+    "hitokoto": true,
     "bookmarks": true
   },
   "hasCustomLayout": false,
@@ -221,6 +234,7 @@ CREATE INDEX IF NOT EXISTS idx_shares_exp ON shares(expires_at);
 	alterCols := []string{
 		`ALTER TABLE users ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN share_scopes TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range alterCols {
 		if _, err := conn.Exec(stmt); err != nil {
@@ -232,7 +246,7 @@ CREATE INDEX IF NOT EXISTS idx_shares_exp ON shares(expires_at);
 	return nil
 }
 
-// SeedStarterData creates initial groups, bookmarks, and settings for a new user.
+// SeedStarterData creates minimal initial group, valid starter bookmark, and settings for a new user.
 func SeedStarterData(conn *sql.DB, userID int64) error {
 	now := time.Now().UTC()
 	tx, err := conn.Begin()
@@ -241,52 +255,23 @@ func SeedStarterData(conn *sql.DB, userID int64) error {
 	}
 	defer tx.Rollback()
 
-	groupNames := []string{"实验室", "开发", "工具"}
-	groupIDs := make([]int64, len(groupNames))
-	for i, name := range groupNames {
-		res, err := tx.Exec(
-			`INSERT INTO groups (user_id, name, sort_order, created_at) VALUES (?, ?, ?, ?)`,
-			userID, name, i, now,
-		)
-		if err != nil {
-			return err
-		}
-		gid, err := res.LastInsertId()
-		if err != nil {
-			return err
-		}
-		groupIDs[i] = gid
+	res, err := tx.Exec(
+		`INSERT INTO groups (user_id, name, sort_order, created_at) VALUES (?, ?, ?, ?)`,
+		userID, "常用", 0, now,
+	)
+	if err != nil {
+		return err
+	}
+	gid, err := res.LastInsertId()
+	if err != nil {
+		return err
 	}
 
-	starters := []struct {
-		groupIdx int
-		title    string
-		desc     string
-		lan      string
-		ts       string
-		wan      string
-		icon     string
-		color    string
-	}{
-		{0, "Proxmox", "虚拟化控制台", "https://192.168.1.10:8006", "https://100.64.0.10:8006", "", "server", "#f97316"},
-		{0, "TrueNAS", "ZFS 文件存储", "http://192.168.1.12", "http://100.64.0.12", "", "harddrive", "#38bdf8"},
-		{0, "Jellyfin", "家庭影音库", "http://192.168.1.10:8096", "http://100.64.0.10:8096", "https://tv.example.com", "play", "#a855f7"},
-		{0, "Home Assistant", "智能家居中枢", "http://192.168.1.15:8123", "http://100.64.0.15:8123", "https://home.example.com", "home", "#0ea5e9"},
-		{1, "Gitea", "私有 Git 代码库", "http://192.168.1.10:3005", "http://100.64.0.10:3005", "https://git.example.com", "code", "#22c55e"},
-		{1, "Portainer", "Docker 容器面板", "https://192.168.1.10:9443", "https://100.64.0.10:9443", "", "box", "#06b6d4"},
-		{1, "Grafana", "节点监控看板", "http://192.168.1.10:3001", "http://100.64.0.10:3001", "https://metrics.example.com", "chart", "#fb923c"},
-		{1, "Tailscale", "组网节点管理", "https://login.tailscale.com/admin", "https://login.tailscale.com/admin", "https://login.tailscale.com/admin", "globe", "#818cf8"},
-		{2, "Vaultwarden", "私有密码库", "https://192.168.1.10:8443", "https://100.64.0.10:8443", "https://vault.example.com", "lock", "#3b82f6"},
-		{2, "Memos", "轻量碎片笔记", "http://192.168.1.10:5230", "http://100.64.0.10:5230", "https://memos.example.com", "note", "#10b981"},
-	}
-
-	for i, s := range starters {
-		if _, err := tx.Exec(
-			`INSERT INTO bookmarks (user_id, group_id, title, description, lan_url, ts_url, wan_url, icon, color, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			userID, groupIDs[s.groupIdx], s.title, s.desc, s.lan, s.ts, s.wan, s.icon, s.color, i, now,
-		); err != nil {
-			return err
-		}
+	if _, err := tx.Exec(
+		`INSERT INTO bookmarks (user_id, group_id, title, description, lan_url, ts_url, wan_url, icon, color, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, gid, "Orbit", "项目主页与文档", "", "", "https://github.com/MIKU-N/Orbit", "compass", "#6366f1", 0, now,
+	); err != nil {
+		return err
 	}
 
 	var compact json.RawMessage

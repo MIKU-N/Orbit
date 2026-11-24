@@ -1,6 +1,6 @@
 export type NetworkZone = 'lan' | 'tailscale' | 'wan';
 
-export type BuiltinLayoutItemId = 'clock' | 'search' | 'weather' | 'monitor' | 'bookmarks';
+export type BuiltinLayoutItemId = 'clock' | 'search' | 'weather' | 'monitor' | 'hitokoto' | 'bookmarks';
 export type LayoutItemId = string;
 
 export interface LayoutBox {
@@ -48,6 +48,8 @@ export interface WeatherConfig {
   lat?: number;
   lon?: number;
   unit: 'C' | 'F';
+  style?: 'standard' | 'banner';
+  customText?: string;
   showFeelsLike: boolean;
   showHumidity: boolean;
   showWind: boolean;
@@ -56,6 +58,24 @@ export interface WeatherConfig {
   showHiLo: boolean;
   forecastDays: 0 | 2 | 3;
   refreshMinutes: 15 | 30 | 60;
+}
+
+export interface HitokotoQuote {
+  text: string;
+  from: string;
+  from_who: string;
+  source: 'api' | 'builtin' | 'custom';
+}
+
+export interface HitokotoConfig {
+  mode: 'auto' | 'api' | 'builtin';
+  apiUrl: string;
+  types: string[];
+  autoRotate: boolean;
+  intervalSeconds: 10 | 20 | 30 | 60 | 300;
+  showAuthor: boolean;
+  align: 'left' | 'center';
+  customQuotes: string[];
 }
 
 export type MonitorMetricKey =
@@ -127,6 +147,7 @@ export interface UserSettings {
   weatherCity: string;
   weatherLabel: string;
   weatherConfig: WeatherConfig;
+  hitokotoConfig: HitokotoConfig;
   monitorConfig: MonitorConfig;
   footer: FooterConfig;
   visibleItems: Record<string, boolean>;
@@ -160,6 +181,7 @@ export interface PublicConfig {
   weatherConfig?: WeatherConfig;
   weatherCity?: string;
   weatherLabel?: string;
+  hitokotoConfig?: HitokotoConfig;
   footer?: FooterConfig;
   plugins?: PluginStateRecord[];
 }
@@ -168,6 +190,7 @@ export interface User {
   id: number;
   username: string;
   role: string;
+  avatar?: string;
   parent_id?: number;
   share_scopes?: ShareScopes;
   api_token?: string;

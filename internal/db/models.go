@@ -27,6 +27,7 @@ type User struct {
 	Username     string      `json:"username"`
 	PasswordHash string      `json:"-"`
 	Role         string      `json:"role"`
+	Avatar       string      `json:"avatar"`
 	ParentID     int64       `json:"parent_id"`
 	ShareScopes  ShareScopes `json:"share_scopes"`
 	APIToken     string      `json:"api_token,omitempty"`

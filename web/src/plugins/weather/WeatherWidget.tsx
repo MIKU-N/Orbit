@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Cloud, CloudLightning, CloudRain, Moon, Snowflake, Sun } from 'lucide-react';
 import type { WeatherConfig, WeatherPayload } from '../../types';
 import { MotionCard } from '../../sdk/primitives';
@@ -5,11 +6,14 @@ import { MotionCard } from '../../sdk/primitives';
 interface WeatherWidgetProps {
   weather: WeatherPayload | null;
   config: WeatherConfig;
+  showSeconds?: boolean;
   enableTilt: boolean;
   layoutEditing: boolean;
   readOnly?: boolean;
   onOpenSettings: () => void;
 }
+
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
 function formatTempVal(c: number, unit: 'C' | 'F'): number {
   return unit === 'F' ? Math.round((c * 9) / 5 + 32) : Math.round(c);
@@ -18,12 +22,22 @@ function formatTempVal(c: number, unit: 'C' | 'F'): number {
 export function WeatherWidget({
   weather,
   config,
+  showSeconds = false,
   enableTilt,
   layoutEditing,
   readOnly = false,
   onOpenSettings,
 }: WeatherWidgetProps) {
   const unit = config.unit || 'C';
+  const style = config.style || 'standard';
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    if (style !== 'banner') return;
+    setNow(new Date());
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, [style]);
 
   const iconEl = (() => {
     switch (weather?.kind) {
@@ -80,6 +94,71 @@ export function WeatherWidget({
       : forecastCount > 0
         ? (weather?.slots || []).slice(0, forecastCount)
         : [];
+
+  if (style === 'banner') {
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    const timeStr = showSeconds ? `${hh}:${mm}:${ss}` : `${hh}:${mm}`;
+    const dateStr = `${now.getMonth() + 1}月${now.getDate()}日 周${WEEKDAYS[now.getDay()]}`;
+    const customCopy = config.customText?.trim() || `此刻 · ${cityDisplay}`;
+
+    return (
+      <MotionCard
+        enableTilt={enableTilt}
+        disabled={layoutEditing}
+        onClick={() => {
+          if (!layoutEditing && !readOnly) onOpenSettings();
+        }}
+        className={`rounded-2xl p-4 min-h-[108px] flex flex-col justify-between gap-2.5 ${
+          readOnly ? 'cursor-default' : 'cursor-pointer'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm sm:text-[15px] font-medium leading-snug break-words line-clamp-2">
+              {customCopy}
+            </div>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-2xl sm:text-[26px] font-light tracking-tight tabular-nums leading-none">
+              {timeStr}
+            </div>
+            <div className="text-[11px] mt-1 tabular-nums" style={{ color: 'var(--ink-muted)' }}>
+              {dateStr}
+            </div>
+          </div>
+        </div>
+
+        <div
+          className="flex items-center justify-between gap-2 pt-2 border-t text-xs"
+          style={{ borderColor: 'var(--glass-border)' }}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="shrink-0 weather-float">{iconEl}</span>
+            <span className="font-semibold text-sm tabular-nums shrink-0">
+              {weather ? `${formatTempVal(weather.temp_c, unit)}°` : '--°'}
+            </span>
+            <span className="truncate" style={{ color: 'var(--ink-muted)' }}>
+              {weather ? `${weather.cond} · ${cityDisplay}` : '加载中'}
+            </span>
+          </div>
+
+          <div
+            className="truncate text-right shrink-0 max-w-[46%]"
+            style={{ color: 'var(--ink-muted)' }}
+            title={detailTags.join(' · ')}
+          >
+            {detailTags.length > 0
+              ? detailTags.slice(0, 2).join(' · ')
+              : slots.length > 0
+                ? slots.map((s) => `${s.label} ${s.temp}`).join(' · ')
+                : ''}
+          </div>
+        </div>
+      </MotionCard>
+    );
+  }
 
   return (
     <MotionCard

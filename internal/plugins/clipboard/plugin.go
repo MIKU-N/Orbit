@@ -222,7 +222,11 @@ func (p *Plugin) handleCreateClip(w http.ResponseWriter, r *http.Request) {
 		ID: id, UserID: u.ID, Kind: kind, Content: req.Content,
 		Device: device, ExpiresAt: exp, CreatedAt: now,
 	}
-	p.host.Hub().BroadcastUser(u.ID, "clip_updated", map[string]any{"action": "created", "id": id})
+	p.host.Hub().BroadcastUser(u.ID, "clip_updated", map[string]any{
+		"action": "created",
+		"id":     id,
+		"clip":   clip,
+	})
 	plugin.WriteJSON(w, http.StatusCreated, map[string]any{"clip": clip})
 }
 
@@ -316,7 +320,11 @@ func (p *Plugin) handleUploadClipImage(w http.ResponseWriter, r *http.Request) {
 		ID: id, UserID: u.ID, Kind: "image", Content: content,
 		ImagePath: imgURL, Device: device, ExpiresAt: &exp, CreatedAt: now,
 	}
-	p.host.Hub().BroadcastUser(u.ID, "clip_updated", map[string]any{"action": "created", "id": id})
+	p.host.Hub().BroadcastUser(u.ID, "clip_updated", map[string]any{
+		"action": "created",
+		"id":     id,
+		"clip":   clip,
+	})
 	plugin.WriteJSON(w, http.StatusCreated, map[string]any{"clip": clip})
 }
 

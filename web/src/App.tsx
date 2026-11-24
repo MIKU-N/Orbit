@@ -7,16 +7,18 @@ import { DragUploadOverlay } from './core/DragUploadOverlay';
 import { ExternalWidgetHost } from './core/ExternalWidgetHost';
 import { FooterBar } from './core/FooterBar';
 import { MobileCapsule } from './core/MobileCapsule';
+import { NotificationStack, type OrbitNotification } from './core/NotificationStack';
 import { SettingsModal } from './core/SettingsModal';
 import { SlideDrawerHost } from './core/SlideDrawerHost';
 import { TopBar } from './core/TopBar';
+import { ZoneStatusPopover } from './core/ZoneStatusPopover';
 import { useFreeLayout } from './core/useFreeLayout';
 import { useOrbitWS } from './core/useOrbitWS';
 import { applyGlobalFont } from './lib/fonts';
 import { PRESET_WALLPAPERS } from './lib/wallpapers';
 import { BUILTIN_PLUGINS, BookmarkModal, MonitorModal, ShareModal } from './plugins';
 import { OrbitHostProvider } from './sdk/host';
-import { getBookmarkActiveUrl } from './sdk/primitives';
+import { formatBytes, formatSpeed, getBookmarkActiveUrl } from './sdk/primitives';
 import {
   collectSearchSuggestions,
   mergePluginRecords,
@@ -74,6 +76,8 @@ const DEFAULT_SETTINGS: UserSettings = {
     lat: 31.2304,
     lon: 121.4737,
     unit: 'C',
+    style: 'standard',
+    customText: '',
     showFeelsLike: true,
     showHumidity: true,
     showWind: false,
@@ -82,6 +86,16 @@ const DEFAULT_SETTINGS: UserSettings = {
     showHiLo: true,
     forecastDays: 2,
     refreshMinutes: 30,
+  },
+  hitokotoConfig: {
+    mode: 'auto',
+    apiUrl: '',
+    types: ['a', 'd', 'i', 'k'],
+    autoRotate: true,
+    intervalSeconds: 30,
+    showAuthor: true,
+    align: 'center',
+    customQuotes: [],
   },
   monitorConfig: {
     title: '',
@@ -106,6 +120,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     search: true,
     weather: true,
     monitor: true,
+    hitokoto: true,
     bookmarks: true,
   },
   hasCustomLayout: false,
@@ -155,6 +170,16 @@ function mergeUserSettings(raw?: Partial<UserSettings> | Partial<PublicConfig>):
     },
     localWallpapers: Array.isArray(s.localWallpapers) ? s.localWallpapers : [],
     weatherConfig,
+    hitokotoConfig: {
+      ...DEFAULT_SETTINGS.hitokotoConfig,
+      ...(s.hitokotoConfig || {}),
+      types: Array.isArray(s.hitokotoConfig?.types)
+        ? s.hitokotoConfig.types
+        : DEFAULT_SETTINGS.hitokotoConfig.types,
+      customQuotes: Array.isArray(s.hitokotoConfig?.customQuotes)
+        ? s.hitokotoConfig.customQuotes
+        : DEFAULT_SETTINGS.hitokotoConfig.customQuotes,
+    },
     monitorConfig: {
       ...DEFAULT_SETTINGS.monitorConfig,
       ...(s.monitorConfig || {}),
@@ -177,11 +202,7 @@ function mergeUserSettings(raw?: Partial<UserSettings> | Partial<PublicConfig>):
   };
 }
 
-interface Toast {
-  id: number;
-  msg: string;
-  warn?: boolean;
-}
+const MAX_NOTIFICATIONS = 3;
 
 export function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -200,6 +221,7 @@ export function App() {
 
   const [activeGroupId, setActiveGroupId] = useState<number | 'all'>('all');
   const [activeDrawer, setActiveDrawer] = useState<string | null>(null);
+  const [zonePanelOpen, setZonePanelOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<string>('appearance');
@@ -218,15 +240,24 @@ export function App() {
     label: string;
   } | null>(null);
 
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{
+    fileName: string;
+    percent: number;
+    loaded: number;
+    total: number;
+    speedBps: number;
+  } | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [externalDragVisible, setExternalDragVisible] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [notifications, setNotifications] = useState<OrbitNotification[]>([]);
 
   const canvasRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
   const dragCounterRef = useRef(0);
+  const notifTimersRef = useRef<Map<string, number>>(new Map());
+  const localClipIdsRef = useRef<Set<number>>(new Set());
+  const localFileIdsRef = useRef<Set<number>>(new Set());
 
   const initialShareMatch = window.location.pathname.match(/^\/s\/([A-Za-z0-9]+)$/);
   const initialShareCode = initialShareMatch ? initialShareMatch[1].toUpperCase() : undefined;
@@ -279,12 +310,89 @@ export function App() {
     applyGlobalFont(settings.fontConfig);
   }, [settings.fontConfig]);
 
-  const showToast = useCallback((msg: string, warn?: boolean) => {
-    const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, msg, warn }]);
-    window.setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 2400);
+  const clearNotifTimer = useCallback((id: string) => {
+    const t = notifTimersRef.current.get(id);
+    if (t !== undefined) {
+      window.clearTimeout(t);
+      notifTimersRef.current.delete(id);
+    }
+  }, []);
+
+  const dismissNotification = useCallback(
+    (id: string) => {
+      clearNotifTimer(id);
+      setNotifications((prev) => prev.filter((item) => item.id !== id));
+    },
+    [clearNotifTimer],
+  );
+
+  const dismissNotificationByKey = useCallback(
+    (key: string) => {
+      setNotifications((prev) => {
+        const removed = prev.filter((item) => item.key === key);
+        for (const r of removed) clearNotifTimer(r.id);
+        return prev.filter((item) => item.key !== key);
+      });
+    },
+    [clearNotifTimer],
+  );
+
+  const pushNotification = useCallback(
+    (input: Omit<OrbitNotification, 'id'>, ttlMs = 2800) => {
+      const id = input.key ? `k:${input.key}` : `n:${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      clearNotifTimer(id);
+      if (ttlMs > 0) {
+        const timer = window.setTimeout(() => {
+          notifTimersRef.current.delete(id);
+          setNotifications((prev) => prev.filter((x) => x.id !== id));
+        }, ttlMs);
+        notifTimersRef.current.set(id, timer);
+      }
+      setNotifications((prev) => {
+        const nextItem: OrbitNotification = { ...input, id };
+        const existingIdx = prev.findIndex((x) => x.id === id);
+        if (existingIdx >= 0) {
+          const copy = [...prev];
+          copy[existingIdx] = nextItem;
+          return copy;
+        }
+        const combined = [...prev, nextItem];
+        while (combined.length > MAX_NOTIFICATIONS) {
+          // Evict oldest completed/non-progress notification first, keeping active progress cards visible
+          const evictIdx = combined.findIndex((x) => x.kind !== 'progress');
+          const idxToRemove = evictIdx >= 0 ? evictIdx : 0;
+          const [evicted] = combined.splice(idxToRemove, 1);
+          if (evicted) clearNotifTimer(evicted.id);
+        }
+        return combined;
+      });
+    },
+    [clearNotifTimer],
+  );
+
+  useEffect(() => {
+    const timers = notifTimersRef.current;
+    return () => {
+      timers.forEach((t) => window.clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
+  const showToast = useCallback(
+    (msg: string, warn?: boolean) => {
+      pushNotification({ kind: 'toast', msg, warn }, 2600);
+    },
+    [pushNotification],
+  );
+
+  const markLocalClipCreated = useCallback((id: number) => {
+    localClipIdsRef.current.add(id);
+    window.setTimeout(() => localClipIdsRef.current.delete(id), 8000);
+  }, []);
+
+  const markLocalFileCreated = useCallback((id: number) => {
+    localFileIdsRef.current.add(id);
+    window.setTimeout(() => localFileIdsRef.current.delete(id), 8000);
   }, []);
 
   const promptGuestLogin = useCallback(
@@ -308,6 +416,7 @@ export function App() {
 
   const openSettings = useCallback((tab = 'appearance') => {
     setAccountOpen(false);
+    setZonePanelOpen(false);
     setActiveDrawer(null);
     setSettingsTab(tab);
     setSettingsModalOpen(true);
@@ -406,6 +515,7 @@ export function App() {
             clock: true,
             search: true,
             weather: true,
+            hitokoto: true,
             monitor: false,
             bookmarks: false,
           };
@@ -508,10 +618,79 @@ export function App() {
 
   const { peers, selfPeerId, wsConnected, p2pProgress, sendFileP2P } = useOrbitWS({
     enabled: isAuthenticated,
-    onClipsChanged: () => void refreshClips(),
-    onFilesChanged: () => void refreshFiles(),
-    onToast: showToast,
+    onClipsChanged: (ev) => {
+      void refreshClips();
+      if (ev?.action === 'created' && ev.clip && !localClipIdsRef.current.has(ev.clip.id)) {
+        const clip = ev.clip;
+        pushNotification(
+          {
+            kind: 'clipboard',
+            title: '收到新剪贴板',
+            meta: `${clip.device || '其他设备'} · 实时同步`,
+            msg: clip.content || '新剪贴板内容',
+            imageUrl: clip.kind === 'image' ? clip.image_path : undefined,
+            copyValue: clip.kind !== 'image' ? clip.content : undefined,
+            drawerTarget: 'clipboard',
+          },
+          6000,
+        );
+      }
+    },
+    onFilesChanged: (ev) => {
+      void refreshFiles();
+      if (ev?.action === 'created' && ev.file && !localFileIdsRef.current.has(ev.file.id)) {
+        const f = ev.file;
+        pushNotification(
+          {
+            kind: 'file',
+            title: '收到新暂存文件',
+            meta: `${formatBytes(f.size_bytes)} · ${f.zone.toUpperCase()}`,
+            msg: f.orig_name,
+            downloadUrl: `/api/files/${f.id}/download`,
+            drawerTarget: 'files',
+          },
+          6000,
+        );
+      }
+    },
+    onP2PComplete: (info) => {
+      dismissNotificationByKey('p2p-transfer');
+      pushNotification(
+        {
+          kind: 'file',
+          title: info.direction === 'receive' ? 'P2P 文件接收完成' : 'P2P 直传完成',
+          meta: `${formatBytes(info.sizeBytes)} · 均速 ${formatSpeed(info.speedBps)}`,
+          msg: info.fileName,
+          drawerTarget: 'files',
+        },
+        5000,
+      );
+    },
   });
+
+  useEffect(() => {
+    if (p2pProgress) {
+      pushNotification(
+        {
+          key: 'p2p-transfer',
+          kind: 'progress',
+          title: p2pProgress.direction === 'receive' ? '正在 P2P 接收文件' : '正在 P2P 直传文件',
+          msg: p2pProgress.fileName,
+          drawerTarget: 'files',
+          progress: {
+            direction: p2pProgress.direction,
+            percent: p2pProgress.percent,
+            speedBps: p2pProgress.speedBps,
+            transferredBytes: p2pProgress.transferredBytes,
+            totalBytes: p2pProgress.totalBytes,
+          },
+        },
+        0,
+      );
+    } else {
+      dismissNotificationByKey('p2p-transfer');
+    }
+  }, [dismissNotificationByKey, p2pProgress, pushNotification]);
 
   const persistSettings = useCallback(
     (next: UserSettings) => {
@@ -653,6 +832,9 @@ export function App() {
       settings.monitorConfig.metrics.join(','),
       settings.monitorConfig.columns,
       settings.weatherConfig.forecastDays,
+      settings.weatherConfig.style || 'standard',
+      settings.weatherConfig.customText || '',
+      settings.hitokotoConfig.showAuthor ? 'ha' : 'nha',
       settings.searchIconOnly,
     ].join('-'),
   });
@@ -675,12 +857,60 @@ export function App() {
       setUploadError(null);
 
       for (const file of files) {
-        setUploadProgress(0);
+        const initProg = {
+          fileName: file.name,
+          percent: 0,
+          loaded: 0,
+          total: file.size,
+          speedBps: 0,
+        };
+        setUploadProgress(initProg);
+        pushNotification(
+          {
+            key: 'http-upload',
+            kind: 'progress',
+            title: '正在上传到暂存箱',
+            msg: file.name,
+            drawerTarget: 'files',
+            progress: {
+              direction: 'upload',
+              percent: 0,
+              speedBps: 0,
+              transferredBytes: 0,
+              totalBytes: file.size,
+            },
+          },
+          0,
+        );
         try {
-          await api.uploadFileWithProgress(file, 24, (pct) => setUploadProgress(pct));
+          const uploaded = await api.uploadFileWithProgress(file, 24, (prog) => {
+            setUploadProgress({ fileName: file.name, ...prog });
+            pushNotification(
+              {
+                key: 'http-upload',
+                kind: 'progress',
+                title: '正在上传到暂存箱',
+                msg: file.name,
+                drawerTarget: 'files',
+                progress: {
+                  direction: 'upload',
+                  percent: prog.percent,
+                  speedBps: prog.speedBps,
+                  transferredBytes: prog.loaded,
+                  totalBytes: prog.total,
+                },
+              },
+              0,
+            );
+          });
+          if (uploaded.file?.id) {
+            markLocalFileCreated(uploaded.file.id);
+          }
+          dismissNotificationByKey('http-upload');
           await refreshFiles();
           showToast(`已暂存：${file.name}`);
         } catch (e) {
+          dismissNotificationByKey('http-upload');
           if (e instanceof APIError && e.status === 413) {
             const msg = `当前为 ${String(e.data.zone || zone).toUpperCase()} 访问，单文件限 ${String(e.data.limit_mb || auth?.limits.wan_mb || 100)} MB（同局域网设备可用上方 P2P 绕过）`;
             setUploadError(msg);
@@ -693,7 +923,18 @@ export function App() {
         }
       }
     },
-    [auth?.limits.wan_mb, isAuthenticated, promptGuestLogin, refreshFiles, showToast, transferEnabled, zone],
+    [
+      auth?.limits.wan_mb,
+      dismissNotificationByKey,
+      isAuthenticated,
+      markLocalFileCreated,
+      promptGuestLogin,
+      pushNotification,
+      refreshFiles,
+      showToast,
+      transferEnabled,
+      zone,
+    ],
   );
 
   useEffect(() => {
@@ -751,6 +992,7 @@ export function App() {
       if (e.key === 'Escape') {
         setLayoutEditing(false);
         setActiveDrawer(null);
+        setZonePanelOpen(false);
         setAccountOpen(false);
         setSettingsModalOpen(false);
         setAuthModalOpen(false);
@@ -791,6 +1033,9 @@ export function App() {
       const target = e.target as HTMLElement;
       if (!target.closest('#accountPanel') && !target.closest('#accountTrigger')) {
         setAccountOpen(false);
+      }
+      if (!target.closest('#zonePanel') && !target.closest('#zoneTrigger')) {
+        setZonePanelOpen(false);
       }
     };
 
@@ -932,9 +1177,10 @@ export function App() {
     canViewMonitor,
     zone,
     detectedZone: auth?.detected_zone || 'lan',
+    clientIp: auth?.client_ip || '',
     setZone,
     cycleZone,
-    limits: auth?.limits || { lan_mb: 0, ts_mb: 2048, wan_mb: 100 },
+    limits: auth?.limits || { lan_mb: 10240, ts_mb: 2048, wan_mb: 100 },
     publicConfig: publicCfg,
 
     settings,
@@ -957,6 +1203,7 @@ export function App() {
     activeDrawer,
     openDrawer: (drawerId) => {
       setAccountOpen(false);
+      setZonePanelOpen(false);
       setActiveDrawer(drawerId);
     },
     settingsOpen: settingsModalOpen,
@@ -979,6 +1226,24 @@ export function App() {
       );
       showToast('已重置 API Token');
     },
+    uploadAvatar: async (file) => {
+      const res = await api.uploadAvatar(file);
+      setAuth((prev) =>
+        prev && prev.user
+          ? { ...prev, user: { ...prev.user, avatar: res.avatar } }
+          : prev,
+      );
+      showToast('头像已更新');
+    },
+    deleteAvatar: async () => {
+      await api.deleteAvatar();
+      setAuth((prev) =>
+        prev && prev.user
+          ? { ...prev, user: { ...prev.user, avatar: '' } }
+          : prev,
+      );
+      showToast('已恢复默认头像');
+    },
 
     searchInputRef,
     searchElevated,
@@ -994,6 +1259,33 @@ export function App() {
       setBookmarkModalOpen(true);
     },
     openBookmark: handleOpenBookmark,
+    saveBookmark: async (payload, editingId) => {
+      if (editingId) {
+        await api.updateBookmark(editingId, payload);
+        showToast('已更新书签');
+      } else {
+        await api.createBookmark(payload);
+        showToast('已添加书签');
+      }
+      await refreshBookmarks();
+    },
+    deleteBookmark: async (id) => {
+      await api.deleteBookmark(id);
+      await refreshBookmarks();
+      showToast('已删除书签');
+    },
+    batchDeleteBookmarks: async (ids) => {
+      if (!ids.length) return;
+      const res = await api.batchDeleteBookmarks(ids);
+      await refreshBookmarks();
+      showToast(`已批量删除 ${res.deleted} 条书签`);
+    },
+    batchMoveBookmarks: async (ids, groupId) => {
+      if (!ids.length) return;
+      const res = await api.batchMoveBookmarks(ids, groupId);
+      await refreshBookmarks();
+      showToast(`已移动 ${res.moved} 条书签到目标分组`);
+    },
     reorderBookmarks: (ids) => {
       const map = new Map(bookmarks.map((b) => [b.id, b]));
       const reordered = ids.map((id) => map.get(id)).filter((x): x is Bookmark => Boolean(x));
@@ -1004,6 +1296,11 @@ export function App() {
       const res = await api.createGroup(name);
       await refreshBookmarks();
       return res.group;
+    },
+    updateGroup: async (id, name) => {
+      await api.updateGroup(id, name);
+      await refreshBookmarks();
+      showToast('已重命名分组');
     },
     deleteGroup: async (id) => {
       await api.deleteGroup(id);
@@ -1016,8 +1313,10 @@ export function App() {
         const res = await api.importSunPanel(rawJson);
         await refreshBookmarks();
         showToast(`成功导入 ${res.imported} 条书签`);
+        return true;
       } catch (e) {
         showToast((e as Error).message || '导入失败', true);
+        return false;
       }
     },
     importBrowserBookmarks: async (html, groupName) => {
@@ -1026,8 +1325,10 @@ export function App() {
         await refreshBookmarks();
         setActiveGroupId(res.group_id);
         showToast(`成功导入 ${res.imported} 个书签到「${res.group_name}」`);
+        return true;
       } catch (e) {
         showToast((e as Error).message || '导入失败', true);
+        return false;
       }
     },
 
@@ -1035,6 +1336,7 @@ export function App() {
 
     clips,
     refreshClips,
+    markLocalClipCreated,
 
     filesData,
     refreshFiles,
@@ -1104,7 +1406,7 @@ export function App() {
             } as React.CSSProperties
           }
         >
-          {toasts.map((t) => (
+          {notifications.map((t) => (
             <div
               key={t.id}
               className="pointer-events-auto glass-strong rounded-full px-4 py-2 text-xs flex items-center gap-2 toast-slide-down text-white shadow-lg"
@@ -1172,7 +1474,14 @@ export function App() {
         <TopBar
           snap={snap}
           onToggleSnap={setSnap}
-          onToggleAccount={() => setAccountOpen((v) => !v)}
+          onToggleZonePanel={() => {
+            setAccountOpen(false);
+            setZonePanelOpen((v) => !v);
+          }}
+          onToggleAccount={() => {
+            setZonePanelOpen(false);
+            setAccountOpen((v) => !v);
+          }}
         />
 
         <main
@@ -1249,6 +1558,11 @@ export function App() {
 
         {isAuthenticated && auth.user && (
           <>
+            <ZoneStatusPopover
+              open={zonePanelOpen}
+              onClose={() => setZonePanelOpen(false)}
+            />
+
             <AccountPopover
               open={accountOpen}
               user={auth.user}
@@ -1257,6 +1571,7 @@ export function App() {
               onStartLayoutEdit={startLayoutEdit}
               onLogout={async () => {
                 await api.logout();
+                setZonePanelOpen(false);
                 setAccountOpen(false);
                 setSettingsModalOpen(false);
                 setActiveDrawer(null);
@@ -1268,7 +1583,12 @@ export function App() {
           </>
         )}
 
-        <MobileCapsule onBeforeSelect={() => setAccountOpen(false)} />
+        <MobileCapsule
+          onBeforeSelect={() => {
+            setAccountOpen(false);
+            setZonePanelOpen(false);
+          }}
+        />
 
         {isAuthenticated && (
           <>
@@ -1287,21 +1607,8 @@ export function App() {
                 editingBookmark={editingBookmark}
                 groups={groups}
                 onClose={() => setBookmarkModalOpen(false)}
-                onSave={async (payload, editingId) => {
-                  if (editingId) {
-                    await api.updateBookmark(editingId, payload);
-                    showToast('已更新书签');
-                  } else {
-                    await api.createBookmark(payload);
-                    showToast('已添加书签');
-                  }
-                  await refreshBookmarks();
-                }}
-                onDelete={async (id) => {
-                  await api.deleteBookmark(id);
-                  await refreshBookmarks();
-                  showToast('已删除书签');
-                }}
+                onSave={host.saveBookmark}
+                onDelete={host.deleteBookmark}
                 onCreateGroup={host.createGroup}
                 onImportSunPanel={host.importSunPanel}
                 onImportBrowserBookmarks={host.importBrowserBookmarks}
@@ -1322,7 +1629,7 @@ export function App() {
               <DragUploadOverlay
                 visible={externalDragVisible}
                 detectedZone={auth.detected_zone}
-                wanMaxMB={auth.limits.wan_mb}
+                limits={auth.limits}
               />
             )}
           </>
@@ -1339,20 +1646,12 @@ export function App() {
           />
         )}
 
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center gap-2 pointer-events-none w-full max-w-sm px-4">
-          {toasts.map((t) => (
-            <div
-              key={t.id}
-              className="pointer-events-auto glass-strong rounded-full px-4 py-2 text-xs flex items-center gap-2 toast-slide-down shadow-lg"
-            >
-              <span
-                className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{ background: t.warn ? 'var(--warn)' : 'var(--ok)' }}
-              />
-              <span>{t.msg}</span>
-            </div>
-          ))}
-        </div>
+        <NotificationStack
+          items={notifications}
+          onDismiss={dismissNotification}
+          onCopy={copyText}
+          onOpenDrawer={(drawerId) => host.openDrawer(drawerId)}
+        />
       </div>
     </OrbitHostProvider>
   );

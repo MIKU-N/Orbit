@@ -19,6 +19,7 @@ import (
 	"orbit/internal/plugins/bookmarks"
 	"orbit/internal/plugins/clipboard"
 	"orbit/internal/plugins/clock"
+	"orbit/internal/plugins/hitokoto"
 	"orbit/internal/plugins/monitor"
 	"orbit/internal/plugins/search"
 	"orbit/internal/plugins/transfer"
@@ -28,7 +29,7 @@ import (
 func newTestKernel(t *testing.T, wanMaxMB int64) (*kernel.Kernel, http.Handler) {
 	t.Helper()
 	dir := t.TempDir()
-	for _, sub := range []string{"uploads", "clips", "wallpapers", "icons", "fonts", "plugins", "cache/bing"} {
+	for _, sub := range []string{"uploads", "clips", "wallpapers", "icons", "avatars", "fonts", "plugins", "cache/bing"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -55,6 +56,7 @@ func newTestKernel(t *testing.T, wanMaxMB int64) (*kernel.Kernel, http.Handler) 
 		clock.New(),
 		search.New(),
 		weather.New(),
+		hitokoto.New(),
 		bookmarks.New(),
 		monitor.New(),
 		clipboard.New(),
@@ -126,7 +128,7 @@ func TestKernelPluginsAndIsolation(t *testing.T) {
 		t.Fatal("expected api_token on setup")
 	}
 
-	// 3. Verify 7 builtin plugins registered
+	// 3. Verify 8 builtin plugins registered
 	rr = doJSONReq(t, h, http.MethodGet, "/api/plugins", nil, adminCookies, "", "")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("list plugins got %d: %s", rr.Code, rr.Body.String())
@@ -135,8 +137,22 @@ func TestKernelPluginsAndIsolation(t *testing.T) {
 		Plugins []plugin.PluginStateRecord `json:"plugins"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &pluginsRes)
-	if len(pluginsRes.Plugins) != 7 {
-		t.Fatalf("expected 7 builtin plugins, got %d", len(pluginsRes.Plugins))
+	if len(pluginsRes.Plugins) != 8 {
+		t.Fatalf("expected 8 builtin plugins, got %d", len(pluginsRes.Plugins))
+	}
+
+	// Verify Hitokoto builtin quote endpoint works (both public and plugin path)
+	rr = doJSONReq(t, h, http.MethodGet, "/api/hitokoto?mode=builtin", nil, nil, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("hitokoto builtin got %d: %s", rr.Code, rr.Body.String())
+	}
+	var hkRes struct {
+		Text   string `json:"text"`
+		Source string `json:"source"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &hkRes)
+	if hkRes.Text == "" || hkRes.Source != "builtin" {
+		t.Fatalf("unexpected hitokoto response: %+v", hkRes)
 	}
 
 	// 4. Push clip via Bearer API token
@@ -420,5 +436,173 @@ func TestKernelPluginsAndIsolation(t *testing.T) {
 	rr = doJSONReq(t, h, http.MethodGet, "/api/p/community.qbt/assets/widget.html", nil, adminCookies, "", "")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("deleted plugin asset expected 404, got %d", rr.Code)
+	}
+}
+
+func TestStarterDataSunPanelBatchDeleteAndAvatar(t *testing.T) {
+	_, h := newTestKernel(t, 10)
+
+	// 1. Setup admin user and verify minimal starter data
+	rr := doJSONReq(t, h, http.MethodPost, "/api/auth/setup", map[string]string{
+		"username": "admin",
+		"password": "password123",
+	}, nil, "", "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setup got %d: %s", rr.Code, rr.Body.String())
+	}
+	adminCookies := rr.Result().Cookies()
+
+	rr = doJSONReq(t, h, http.MethodGet, "/api/bookmarks", nil, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list bookmarks got %d", rr.Code)
+	}
+	var initBM struct {
+		Groups    []db.Group    `json:"groups"`
+		Bookmarks []db.Bookmark `json:"bookmarks"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &initBM)
+	if len(initBM.Groups) != 1 || len(initBM.Bookmarks) != 1 {
+		t.Fatalf("expected minimal starter data (1 group, 1 bookmark), got %d groups and %d bookmarks", len(initBM.Groups), len(initBM.Bookmarks))
+	}
+	if initBM.Bookmarks[0].WANUrl == "" {
+		t.Fatalf("expected starter bookmark to have a valid public URL, got %+v", initBM.Bookmarks[0])
+	}
+
+	// 2. Import exact Sun-Panel v1.8.1 JSON (17 children under icons[0].children)
+	sunPanelV181 := `{"version":1,"appName":"Sun-Panel-Config","exportTime":"2026-11-25 02:56:43","appVersion":"1.8.1","md5":"419cfb4b040d1e463b24f138993c09d0","icons":[{"title":"服务列表","sort":0,"children":[{"icon":{"itemType":2,"src":"/uploads/2025/4/3/bec84bd0f92769117e3bf82192f0a26c.ico","text":"","backgroundColor":""},"sort":9999,"title":"CloudDrive2","url":"http://10.0.0.7:19798/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"http://10.0.0.7:8096/web/favicon.ico","text":"","backgroundColor":""},"sort":9999,"title":"Rain's Media","url":"http://10.0.0.7:8096/web/index.html#!/home","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/4/4/ecee57ca252a0603fcccddb3691040b8.png","text":"","backgroundColor":""},"sort":9999,"title":"ImmortalWrt - LuCI","url":"http://10.0.0.3/cgi-bin/luci/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"https://10.0.0.2:8006/pve2/images/logo-128.png","text":"","backgroundColor":""},"sort":9999,"title":"PVE","url":"https://10.0.0.2:8006/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/4/4/89c1c3e83e0cb12fe877914ec573aff6.svg","text":"","backgroundColor":""},"sort":9999,"title":"Rain's GitTea","url":"http://10.0.0.7:4000/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/4/4/92c66e8b8ef86e8f1c23b54c1bdc5abe.ico","text":"","backgroundColor":""},"sort":9999,"title":"Home Assistant","url":"http://10.0.0.155:8123","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/4/9/22da0ef7f30df40ea08caac362e481c5.ico","text":"","backgroundColor":""},"sort":9999,"title":"Misskey","url":"https://misskey.nekovo.dev/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/4/14/a1076e8b1086a8e6b70a91194f495af5.png","text":"","backgroundColor":""},"sort":9999,"title":"qBittorrent","url":"http://10.0.0.7:8085/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/4/14/b36897641597913ff03481789afe7a42.ico","text":"","backgroundColor":""},"sort":9999,"title":"PeerBanHelper","url":"http://10.0.0.7:9898/dashboard","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"https://cdn.wallpaperswide.com/templates/custom/ds/ds.1.png","text":"","backgroundColor":""},"sort":9999,"title":"小雅-Alist","url":"http://10.0.0.7:5678/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/5/1/72cb54530e8e7a48d25ff724a104679c.ico","text":"","backgroundColor":""},"sort":9999,"title":"MoviePilot","url":"http://10.0.0.7:3000/#/login","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/8/31/64821326ba020e6b7bfa54df6222c3f6.svg","text":"","backgroundColor":""},"sort":9999,"title":"青龙面板","url":"http://10.0.0.7:5700/","lanUrl":"","description":"","openMethod":2,"cardType":1,"backgroundColor":"#2a2a2a6b","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2025/9/30/f29666f96f3490d395fe1c68a6ac32da.ico","text":"","backgroundColor":""},"sort":9999,"title":"饥荒服务器控制面板","url":"http://dst.i-f.work/","lanUrl":"http://10.0.0.7:8082/#/login","description":"","openMethod":2,"cardType":1,"backgroundColor":"#2a2a2a6b","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2026/1/20/1bde9cefcd810627f70cab3ea558dcec.png","text":"","backgroundColor":""},"sort":9999,"title":"MusciTag","url":"http://10.0.0.7:8002/#/","lanUrl":"http://10.0.0.7:8002/#/","description":"","openMethod":2,"cardType":1,"backgroundColor":"#2a2a2a6b","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2026/3/24/aec3f50d7528fb1e669e5329f3197c5e.png","text":"","backgroundColor":""},"sort":9999,"title":"米家自动化极客版","url":"http://10.0.0.55/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2026/5/25/96282bd4a17f51cb084b8e26c675ac52.svg","text":"","backgroundColor":""},"sort":9999,"title":"AstrBot - 仪表盘","url":"http://10.0.0.11:6185/#/","lanUrl":"","description":"","openMethod":2,"cardType":0,"backgroundColor":"","expandParam":{}},{"icon":{"itemType":2,"src":"/uploads/2026/9/1/48701efd5ab1ce4f006de7173a05ea5f.ico","text":"","backgroundColor":""},"sort":9999,"title":"相册","url":"https://photo.i-f.work/auth/login","lanUrl":"http://10.0.0.7:2283","description":"","openMethod":2,"cardType":1,"backgroundColor":"#2a2a2a6b","expandParam":{}}],"cardStyle":{"style":0,"textColor":"#ffffff","textInfoHideDescription":false,"textIconHideTitle":false}}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/bookmarks/import/sunpanel", bytes.NewBufferString(sunPanelV181))
+	req.RemoteAddr = "192.168.1.50:12345"
+	req.Header.Set("Content-Type", "application/json")
+	for _, c := range adminCookies {
+		req.AddCookie(c)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("import sunpanel v1.8.1 got %d: %s", rr.Code, rr.Body.String())
+	}
+	var importRes struct {
+		Imported int `json:"imported"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &importRes)
+	if importRes.Imported != 17 {
+		t.Fatalf("expected 17 imported bookmarks, got %d", importRes.Imported)
+	}
+
+	rr = doJSONReq(t, h, http.MethodGet, "/api/bookmarks", nil, adminCookies, "", "")
+	var afterImport struct {
+		Groups    []db.Group    `json:"groups"`
+		Bookmarks []db.Bookmark `json:"bookmarks"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &afterImport)
+	var serviceGroupID int64
+	for _, g := range afterImport.Groups {
+		if g.Name == "服务列表" {
+			serviceGroupID = g.ID
+		}
+	}
+	if serviceGroupID == 0 {
+		t.Fatalf("expected group 服务列表 to be created, got %+v", afterImport.Groups)
+	}
+	byTitle := map[string]db.Bookmark{}
+	for _, b := range afterImport.Bookmarks {
+		byTitle[b.Title] = b
+	}
+	if bm := byTitle["CloudDrive2"]; bm.GroupID != serviceGroupID || bm.LANUrl != "http://10.0.0.7:19798/" || bm.WANUrl != "" || bm.Icon != "globe" {
+		t.Fatalf("unexpected CloudDrive2 bookmark: %+v", bm)
+	}
+	if bm := byTitle["Rain's Media"]; bm.Icon != "http://10.0.0.7:8096/web/favicon.ico" {
+		t.Fatalf("expected external icon preserved for Rain's Media, got %+v", bm)
+	}
+	if bm := byTitle["Misskey"]; bm.WANUrl != "https://misskey.nekovo.dev/" || bm.LANUrl != "" {
+		t.Fatalf("unexpected Misskey bookmark: %+v", bm)
+	}
+	if bm := byTitle["MusciTag"]; bm.LANUrl != "http://10.0.0.7:8002/#/" || bm.WANUrl != "" || bm.Color != "#6366f1" {
+		t.Fatalf("unexpected MusciTag bookmark: %+v", bm)
+	}
+	if bm := byTitle["相册"]; bm.LANUrl != "http://10.0.0.7:2283" || bm.WANUrl != "https://photo.i-f.work/auth/login" {
+		t.Fatalf("unexpected 相册 bookmark: %+v", bm)
+	}
+
+	// 3. Rename group, batch move, and batch delete
+	rr = doJSONReq(t, h, http.MethodPut, "/api/groups/"+strconv.FormatInt(serviceGroupID, 10), map[string]string{
+		"name": "内网服务",
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("rename group got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	moveIDs := []int64{byTitle["CloudDrive2"].ID, byTitle["Misskey"].ID}
+	rr = doJSONReq(t, h, http.MethodPost, "/api/bookmarks/batch-move", map[string]any{
+		"ids":      moveIDs,
+		"group_id": initBM.Groups[0].ID,
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("batch move got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	deleteIDs := []int64{byTitle["CloudDrive2"].ID, byTitle["MusciTag"].ID, byTitle["相册"].ID}
+	rr = doJSONReq(t, h, http.MethodPost, "/api/bookmarks/batch-delete", map[string]any{
+		"ids": deleteIDs,
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("batch delete got %d: %s", rr.Code, rr.Body.String())
+	}
+	var batchDelRes struct {
+		Deleted int64 `json:"deleted"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &batchDelRes)
+	if batchDelRes.Deleted != 3 {
+		t.Fatalf("expected 3 deleted bookmarks, got %d", batchDelRes.Deleted)
+	}
+
+	// 4. Avatar upload, serve, persist in auth/me, and reset
+	pngHeader := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+	var avBody bytes.Buffer
+	mw := multipart.NewWriter(&avBody)
+	fw, _ := mw.CreateFormFile("file", "avatar.png")
+	_, _ = fw.Write(pngHeader)
+	_ = mw.Close()
+
+	avReq := httptest.NewRequest(http.MethodPost, "/api/auth/avatar", &avBody)
+	avReq.RemoteAddr = "192.168.1.50:12345"
+	avReq.Header.Set("Content-Type", mw.FormDataContentType())
+	for _, c := range adminCookies {
+		avReq.AddCookie(c)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, avReq)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("upload avatar got %d: %s", rr.Code, rr.Body.String())
+	}
+	var avRes struct {
+		Avatar string `json:"avatar"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &avRes)
+	if avRes.Avatar == "" {
+		t.Fatal("expected non-empty avatar url")
+	}
+
+	rr = doJSONReq(t, h, http.MethodGet, avRes.Avatar, nil, nil, "", "")
+	if rr.Code != http.StatusOK || !bytes.Equal(rr.Body.Bytes(), pngHeader) {
+		t.Fatalf("serve avatar failed: %d", rr.Code)
+	}
+
+	rr = doJSONReq(t, h, http.MethodGet, "/api/auth/me", nil, adminCookies, "", "")
+	var meRes struct {
+		User db.User `json:"user"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &meRes)
+	if meRes.User.Avatar != avRes.Avatar {
+		t.Fatalf("expected user avatar %q, got %q", avRes.Avatar, meRes.User.Avatar)
+	}
+
+	rr = doJSONReq(t, h, http.MethodDelete, "/api/auth/avatar", nil, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete avatar got %d: %s", rr.Code, rr.Body.String())
+	}
+	rr = doJSONReq(t, h, http.MethodGet, avRes.Avatar, nil, nil, "", "")
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("deleted avatar expected 404, got %d", rr.Code)
 	}
 }

@@ -28,12 +28,6 @@ export function MobileCapsule({ onBeforeSelect }: { onBeforeSelect?: () => void 
 
         {dockDrawers.map((d) => {
           const isActive = active === d.drawer.id;
-          const dotColor =
-            d.drawer.id === 'clipboard'
-              ? 'var(--brand)'
-              : d.drawer.id === 'files'
-                ? 'var(--ok)'
-                : undefined;
 
           return (
             <button
@@ -54,7 +48,6 @@ export function MobileCapsule({ onBeforeSelect }: { onBeforeSelect?: () => void 
             >
               {getPluginIcon(d.drawer.icon, 'w-4 h-4')}
               <span>{d.drawer.title}</span>
-              {dotColor && <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />}
             </button>
           );
         })}

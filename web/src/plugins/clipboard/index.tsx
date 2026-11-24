@@ -13,14 +13,16 @@ function ClipboardDrawer() {
   const submitClip = async () => {
     const val = clipText.trim();
     if (!val) return;
-    await api.createClip(val);
+    const res = await api.createClip(val);
+    if (res.clip?.id) host.markLocalClipCreated(res.clip.id);
     await host.refreshClips();
     host.toast('已同步');
     setClipText('');
   };
 
   const handleUploadClipImage = async (file: File) => {
-    await api.uploadClipImage(file);
+    const res = await api.uploadClipImage(file);
+    if (res.clip?.id) host.markLocalClipCreated(res.clip.id);
     await host.refreshClips();
     host.toast('截图已同步');
   };
