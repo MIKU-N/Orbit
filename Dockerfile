@@ -1,5 +1,5 @@
 # Stage 1: Build React + Vite frontend
-FROM --platform=$BUILDPLATFORM node:22-alpine AS web-builder
+FROM --platform=$BUILDPLATFORM node:24-alpine AS web-builder
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json* ./
 RUN npm ci || npm install
