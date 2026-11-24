@@ -14,7 +14,7 @@ interface SearchWidgetProps {
   searchAcrossPlugins: (query: string) => SearchSuggestion[];
   onElevatingChange: (elevated: boolean) => void;
   onToast: (msg: string, warn?: boolean) => void;
-  inputRef: React.RefObject<HTMLInputElement>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
 }
 
 export function SearchWidget({

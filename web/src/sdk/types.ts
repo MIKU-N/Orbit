@@ -199,7 +199,7 @@ export interface HostAPI {
   copyText: (text: string, label?: string) => void;
   rotateToken: () => Promise<void>;
 
-  searchInputRef: React.RefObject<HTMLInputElement>;
+  searchInputRef: React.RefObject<HTMLInputElement | null>;
   searchElevated: boolean;
   setSearchElevated: (v: boolean) => void;
 

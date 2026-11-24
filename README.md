@@ -11,7 +11,7 @@
     <a href="https://github.com/MIKU-N/Orbit/pkgs/container/orbit">
       <img src="https://img.shields.io/badge/GHCR-amd64%20%7C%20arm64-6366f1?logo=docker&logoColor=white" alt="GHCR Multi-Arch" />
     </a>
-    <img src="https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go&logoColor=white" alt="Go 1.23+" />
+    <img src="https://img.shields.io/badge/Go-1.27+-00ADD8?logo=go&logoColor=white" alt="Go 1.27+" />
     <img src="https://img.shields.io/badge/Node.js-24+-339933?logo=nodedotjs&logoColor=white" alt="Node.js 24+" />
     <a href="./LICENSE">
       <img src="https://img.shields.io/badge/License-Apache--2.0-34d399" alt="Apache-2.0 License" />
@@ -167,7 +167,7 @@ docker compose up -d --build
 
 ### 方式 4：本地源码编译运行
 
-环境要求：**Go 1.23+**、**Node.js 24+**。
+环境要求：**Go 1.27+**、**Node.js 24+**。
 
 ```bash
 make build

@@ -7,7 +7,7 @@ COPY web/ ./
 RUN npm run build
 
 # Stage 2: Build static Go binary with embedded web UI
-FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS go-builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS go-builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
@@ -19,7 +19,7 @@ COPY --from=web-builder /src/internal/webui/dist ./internal/webui/dist
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /out/orbit ./cmd/orbit
 
 # Stage 3: Minimal runtime image
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata
 ENV TZ=Asia/Shanghai \
     ORBIT_ADDR=:8080 \

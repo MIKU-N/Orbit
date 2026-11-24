@@ -3,7 +3,7 @@ import type { ResolvedWidget } from '../sdk/types';
 import type { FreeLayoutMap, LayoutBox, LayoutItemId, UserSettings } from '../types';
 
 interface UseFreeLayoutArgs {
-  canvasRef: React.RefObject<HTMLElement>;
+  canvasRef: React.RefObject<HTMLElement | null>;
   widgets: ResolvedWidget[];
   settings: UserSettings;
   layoutEditing: boolean;
