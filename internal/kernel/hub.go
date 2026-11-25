@@ -33,6 +33,31 @@ type wsClient struct {
 	connected  int64
 	conn       *websocket.Conn
 	send       chan []byte
+	sendMu     sync.Mutex
+	closed     bool
+}
+
+func (c *wsClient) safeSend(frame []byte) bool {
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.closed {
+		return false
+	}
+	select {
+	case c.send <- frame:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *wsClient) closeSend() {
+	c.sendMu.Lock()
+	if !c.closed {
+		c.closed = true
+		close(c.send)
+	}
+	c.sendMu.Unlock()
 }
 
 type Hub struct {
@@ -69,6 +94,10 @@ func (h *Hub) remove(c *wsClient) {
 }
 
 func (h *Hub) BroadcastUser(userID int64, msgType string, payload any) {
+	h.BroadcastUserExcept(userID, nil, msgType, payload)
+}
+
+func (h *Hub) BroadcastUserExcept(userID int64, excludePeerIDs []string, msgType string, payload any) {
 	frame, err := json.Marshal(map[string]any{
 		"type":    msgType,
 		"payload": payload,
@@ -76,20 +105,49 @@ func (h *Hub) BroadcastUser(userID int64, msgType string, payload any) {
 	if err != nil {
 		return
 	}
+	excluded := make(map[string]struct{}, len(excludePeerIDs))
+	for _, id := range excludePeerIDs {
+		if id != "" {
+			excluded[id] = struct{}{}
+		}
+	}
 	h.mu.RLock()
 	peers := h.users[userID]
 	targets := make([]*wsClient, 0, len(peers))
 	for _, p := range peers {
+		if _, skip := excluded[p.peerID]; skip {
+			continue
+		}
 		targets = append(targets, p)
 	}
 	h.mu.RUnlock()
 
 	for _, p := range targets {
-		select {
-		case p.send <- frame:
-		default:
-		}
+		p.safeSend(frame)
 	}
+}
+
+func (h *Hub) SendToPeer(userID int64, targetPeerID string, msgType string, payload any) bool {
+	if targetPeerID == "" {
+		return false
+	}
+	frame, err := json.Marshal(map[string]any{
+		"type":    msgType,
+		"payload": payload,
+	})
+	if err != nil {
+		return false
+	}
+	h.mu.RLock()
+	var target *wsClient
+	if peers := h.users[userID]; peers != nil {
+		target = peers[targetPeerID]
+	}
+	h.mu.RUnlock()
+	if target == nil {
+		return false
+	}
+	return target.safeSend(frame)
 }
 
 func (h *Hub) broadcastPeers(userID int64) {
@@ -124,10 +182,7 @@ func (h *Hub) broadcastPeers(userID int64) {
 		if err != nil {
 			continue
 		}
-		select {
-		case receiver.send <- frame:
-		default:
-		}
+		receiver.safeSend(frame)
 	}
 }
 
@@ -149,10 +204,7 @@ func (h *Hub) RelaySignal(userID int64, fromPeerID, targetPeerID string, signal 
 	if err != nil {
 		return
 	}
-	select {
-	case target.send <- frame:
-	default:
-	}
+	target.safeSend(frame)
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -221,7 +273,7 @@ func (k *Kernel) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		k.hub.remove(client)
-		close(client.send)
+		client.closeSend()
 	}()
 
 	conn.SetReadLimit(256 << 10)

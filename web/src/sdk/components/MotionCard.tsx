@@ -16,7 +16,15 @@ export function MotionCard({
   ...rest
 }: MotionCardProps) {
   const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const animationsOff =
+      typeof document !== 'undefined' &&
+      document.documentElement.dataset.orbitAnimations === 'off';
     const card = e.currentTarget;
+    if (animationsOff) {
+      if (card.style.transform) card.style.transform = '';
+      onMouseMove?.(e);
+      return;
+    }
     const rect = card.getBoundingClientRect();
     card.style.setProperty('--mx', `${e.clientX - rect.left}px`);
     card.style.setProperty('--my', `${e.clientY - rect.top}px`);

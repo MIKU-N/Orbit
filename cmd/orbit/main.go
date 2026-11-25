@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,24 @@ import (
 	"orbit/internal/plugins/transfer"
 	"orbit/internal/plugins/weather"
 )
+
+// tunedTCPListener optimizes TCP socket buffers & TCP_NODELAY for high-bandwidth LAN transfers.
+type tunedTCPListener struct {
+	*net.TCPListener
+}
+
+func (l tunedTCPListener) Accept() (net.Conn, error) {
+	tc, err := l.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	_ = tc.SetKeepAlive(true)
+	_ = tc.SetKeepAlivePeriod(2 * time.Minute)
+	_ = tc.SetNoDelay(true)
+	_ = tc.SetReadBuffer(4 << 20)
+	_ = tc.SetWriteBuffer(4 << 20)
+	return tc, nil
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -70,9 +89,18 @@ func main() {
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
+	rawLn, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		log.Fatalf("listen %s: %v", cfg.Addr, err)
+	}
+	var ln net.Listener = rawLn
+	if tcpLn, ok := rawLn.(*net.TCPListener); ok {
+		ln = tunedTCPListener{TCPListener: tcpLn}
+	}
+
 	go func() {
-		log.Printf("Orbit (星轨) Kernel listening on %s (data: %s)", cfg.Addr, cfg.DataDir)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("Orbit (星轨) v%s Kernel listening on %s (data: %s)", config.Version, cfg.Addr, cfg.DataDir)
+		if err := httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server error: %v", err)
 		}
 	}()

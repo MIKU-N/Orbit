@@ -19,7 +19,10 @@ export function DragUploadOverlay({ visible, detectedZone, limits }: DragUploadO
         : limits.wan_mb;
   const zoneName =
     detectedZone === 'lan' ? '局域网模式' : detectedZone === 'tailscale' ? 'Tailscale 模式' : '外网模式';
-  const hint = `${zoneName} · 单文件上限 ${formatLimitMB(limitMB)}`;
+  const hint =
+    limitMB > 0
+      ? `${zoneName} · 单文件上限 ${formatLimitMB(limitMB)}`
+      : `${zoneName} · 单文件不限大小`;
 
   return (
     <div className="fixed inset-0 z-50 glass-strong flex items-center justify-center p-6 pointer-events-none">

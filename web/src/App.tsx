@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { Square, SquareDashed, X } from 'lucide-react';
 import { APIError, api, apiFetch } from './api/client';
 import { AccountPopover } from './core/AccountPopover';
 import { AuthScreen } from './core/AuthScreen';
@@ -14,11 +14,14 @@ import { TopBar } from './core/TopBar';
 import { ZoneStatusPopover } from './core/ZoneStatusPopover';
 import { useFreeLayout } from './core/useFreeLayout';
 import { useOrbitWS } from './core/useOrbitWS';
+import { DEFAULT_RESOURCE_CDN, resolveCdnBase } from './lib/cdn';
+import { copyToClipboard } from './lib/clipboard';
 import { applyGlobalFont } from './lib/fonts';
+import { runThemeTransition } from './lib/themeTransition';
 import { PRESET_WALLPAPERS } from './lib/wallpapers';
-import { BUILTIN_PLUGINS, BookmarkModal, MonitorModal, ShareModal } from './plugins';
+import { BUILTIN_PLUGINS, BookmarkModal, ShareModal } from './plugins';
 import { OrbitHostProvider } from './sdk/host';
-import { formatBytes, formatSpeed, getBookmarkActiveUrl } from './sdk/primitives';
+import { formatBytes, formatLimitMB, formatSpeed, getBookmarkActiveUrl } from './sdk/primitives';
 import {
   collectSearchSuggestions,
   mergePluginRecords,
@@ -27,7 +30,12 @@ import {
   resolveSharingScopes,
   resolveWidgets,
 } from './sdk/registry';
-import type { HostAPI, SearchSuggestion } from './sdk/types';
+import type {
+  HostAPI,
+  PluginStyleOverride,
+  PluginVisibilityOverride,
+  SearchSuggestion,
+} from './sdk/types';
 import type {
   AuthStatus,
   BingWallpaperItem,
@@ -39,31 +47,36 @@ import type {
   NetworkZone,
   PluginStateRecord,
   PublicConfig,
-  StagedFile,
   SystemMetrics,
   UserSettings,
   WeatherPayload,
 } from './types';
 
+const GUEST_THEME_KEY = 'orbit_guest_theme';
+const LAST_THEME_KEY = 'orbit_last_theme';
+
 const DEFAULT_SETTINGS: UserSettings = {
   glassTheme: 'dark',
-  glassBlur: 55,
+  themeMode: 'dark',
+  glassBlur: 0,
   glassBlurMode: 'pct',
-  glassAlpha: 32,
-  glassRadius: 16,
-  bgDim: 22,
+  glassAlpha: 40,
+  glassRadius: 10,
+  bgDim: 0,
   fontConfig: {
-    activeId: 'noto-sans',
+    activeId: 'system',
     customFonts: [],
   },
-  wallpaperMode: 'bing',
+  resourceCdn: DEFAULT_RESOURCE_CDN,
+  wallpaperMode: 'preset',
   wallpaperPreset: 0,
   wallpaperCustom: '',
   localWallpapers: [],
   localWallpaperRotate: false,
   localWallpaperIntervalMin: 15,
-  bingAuto: true,
+  bingAuto: false,
   enableTilt: true,
+  enableAnimations: true,
   showSeconds: false,
   dockStyle: 'card',
   searchIconOnly: false,
@@ -123,14 +136,17 @@ const DEFAULT_SETTINGS: UserSettings = {
     hitokoto: true,
     bookmarks: true,
   },
+  cardlessItems: {
+    clock: true,
+  },
   hasCustomLayout: false,
   layout: null,
   engines: [
-    { id: 'google', name: 'Google', key: 'g', url: 'https://www.google.com/search?q={q}', color: '#60a5fa', icon: '' },
-    { id: 'bing', name: 'Bing', key: 'b', url: 'https://www.bing.com/search?q={q}', color: '#38bdf8', icon: '' },
-    { id: 'github', name: 'GitHub', key: 'gh', url: 'https://github.com/search?q={q}', color: '#e2e8f0', icon: '' },
-    { id: 'bilibili', name: 'Bilibili', key: 'bl', url: 'https://search.bilibili.com/all?keyword={q}', color: '#f472b6', icon: '' },
-    { id: 'local', name: '站内', key: 's', url: '', color: '#a78bfa', icon: '' },
+    { id: 'google', name: 'Google', key: 'g', url: 'https://www.google.com/search?q={q}', color: '#4285f4', icon: 'brand:google' },
+    { id: 'bing', name: 'Bing', key: 'b', url: 'https://www.bing.com/search?q={q}', color: '#00809d', icon: 'brand:bing' },
+    { id: 'github', name: 'GitHub', key: 'gh', url: 'https://github.com/search?q={q}', color: '#1f2937', icon: 'brand:github' },
+    { id: 'bilibili', name: 'Bilibili', key: 'bl', url: 'https://search.bilibili.com/all?keyword={q}', color: '#00aeec', icon: 'brand:bilibili' },
+    { id: 'local', name: '站内', key: 's', url: '', color: '#6366f1', icon: 'brand:local' },
   ],
   activeEngineId: 'google',
 };
@@ -158,15 +174,26 @@ function mergeUserSettings(raw?: Partial<UserSettings> | Partial<PublicConfig>):
         : Math.max(0, Math.min(100, Math.round((s.glassBlur / 36) * 100)))
       : DEFAULT_SETTINGS.glassBlur;
 
+  const themeMode = s.themeMode || s.glassTheme || DEFAULT_SETTINGS.themeMode;
+
   return {
     ...DEFAULT_SETTINGS,
     ...s,
+    themeMode,
     glassBlur: resolvedBlur,
     glassBlurMode: 'pct',
     glassRadius: typeof s.glassRadius === 'number' ? s.glassRadius : DEFAULT_SETTINGS.glassRadius,
+    enableAnimations:
+      typeof s.enableAnimations === 'boolean'
+        ? s.enableAnimations
+        : DEFAULT_SETTINGS.enableAnimations,
     fontConfig: {
       activeId: s.fontConfig?.activeId || DEFAULT_SETTINGS.fontConfig.activeId,
       customFonts: Array.isArray(s.fontConfig?.customFonts) ? s.fontConfig.customFonts : [],
+    },
+    resourceCdn: {
+      mode: s.resourceCdn?.mode || DEFAULT_SETTINGS.resourceCdn.mode,
+      customUrl: typeof s.resourceCdn?.customUrl === 'string' ? s.resourceCdn.customUrl : '',
     },
     localWallpapers: Array.isArray(s.localWallpapers) ? s.localWallpapers : [],
     weatherConfig,
@@ -196,20 +223,51 @@ function mergeUserSettings(raw?: Partial<UserSettings> | Partial<PublicConfig>):
       ...DEFAULT_SETTINGS.visibleItems,
       ...(s.visibleItems || {}),
     },
+    cardlessItems: {
+      ...DEFAULT_SETTINGS.cardlessItems,
+      ...(s.cardlessItems || {}),
+    },
     engines: s.engines?.length
       ? s.engines.map((e) => ({ ...e, icon: e.icon || '' }))
       : DEFAULT_SETTINGS.engines,
   };
 }
 
+function readGuestTheme(): 'dark' | 'light' | null {
+  try {
+    const v = window.localStorage.getItem(GUEST_THEME_KEY);
+    return v === 'light' || v === 'dark' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLastBootTheme(): 'dark' | 'light' {
+  try {
+    const v = window.localStorage.getItem(LAST_THEME_KEY);
+    if (v === 'light' || v === 'dark') return v;
+  } catch {
+    // ignore
+  }
+  return 'dark';
+}
+
 const MAX_NOTIFICATIONS = 3;
 
 export function App() {
+  const [workspaceReady, setWorkspaceReady] = useState(false);
+  const [splashState, setSplashState] = useState<'visible' | 'leaving' | 'gone'>('visible');
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [publicCfg, setPublicCfg] = useState<PublicConfig | null>(null);
   const [backendPlugins, setBackendPlugins] = useState<PluginStateRecord[]>([]);
   const [zone, setZone] = useState<NetworkZone>('lan');
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const [systemTheme, setSystemTheme] = useState<'dark' | 'light'>(() =>
+    typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches
+      ? 'light'
+      : 'dark',
+  );
+  const [guestTheme, setGuestTheme] = useState<'dark' | 'light' | null>(() => readGuestTheme());
   const [groups, setGroups] = useState<BookmarkGroup[]>([]);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [clips, setClips] = useState<ClipItem[]>([]);
@@ -233,7 +291,6 @@ export function App() {
 
   const [bookmarkModalOpen, setBookmarkModalOpen] = useState(false);
   const [editingBookmark, setEditingBookmark] = useState<Bookmark | null>(null);
-  const [monitorModalOpen, setMonitorModalOpen] = useState(false);
   const [shareTarget, setShareTarget] = useState<{
     kind: 'file' | 'clip';
     id: number;
@@ -258,6 +315,15 @@ export function App() {
   const notifTimersRef = useRef<Map<string, number>>(new Map());
   const localClipIdsRef = useRef<Set<number>>(new Set());
   const localFileIdsRef = useRef<Set<number>>(new Set());
+  const selfPeerIdRef = useRef<string>('');
+  const dismissedProgressKeysRef = useRef<Set<string>>(new Set());
+  const loadedRef = useRef({
+    bookmarks: false,
+    clips: false,
+    files: false,
+    weather: false,
+    bing: false,
+  });
 
   const initialShareMatch = window.location.pathname.match(/^\/s\/([A-Za-z0-9]+)$/);
   const initialShareCode = initialShareMatch ? initialShareMatch[1].toUpperCase() : undefined;
@@ -270,6 +336,21 @@ export function App() {
   const canViewMonitor = Boolean(
     isAuthenticated && (auth?.user?.role === 'admin' || auth?.user?.share_scopes?.monitor),
   );
+
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: light)');
+    if (!mq) return;
+    const onChange = (e: MediaQueryListEvent) => setSystemTheme(e.matches ? 'light' : 'dark');
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
+
+  const resolvedTheme: 'dark' | 'light' = useMemo(() => {
+    if (!isAuthenticated && guestTheme) return guestTheme;
+    const mode = settings.themeMode || settings.glassTheme || 'dark';
+    if (mode === 'auto') return systemTheme;
+    return mode === 'light' ? 'light' : 'dark';
+  }, [guestTheme, isAuthenticated, settings.glassTheme, settings.themeMode, systemTheme]);
 
   const plugins = useMemo(
     () => mergePluginRecords(BUILTIN_PLUGINS, backendPlugins),
@@ -288,27 +369,65 @@ export function App() {
 
   const resolvedWidgets = useMemo(
     () =>
-      resolveWidgets(BUILTIN_PLUGINS, plugins, isGuest, settings).filter(
+      resolveWidgets(BUILTIN_PLUGINS, plugins, isGuest, settings, isAdmin).filter(
         (w) => !(w.pluginId === 'orbit.monitor' && !canViewMonitor),
       ),
-    [canViewMonitor, isGuest, plugins, settings],
+    [canViewMonitor, isAdmin, isGuest, plugins, settings],
   );
 
   const resolvedDrawers = useMemo(
-    () => resolveDrawers(BUILTIN_PLUGINS, plugins, isGuest),
-    [isGuest, plugins],
+    () => resolveDrawers(BUILTIN_PLUGINS, plugins, isGuest, isAdmin),
+    [isAdmin, isGuest, plugins],
   );
 
   const resolvedSettingsTabs = useMemo(
-    () => resolveSettingsTabs(BUILTIN_PLUGINS, plugins, isGuest),
-    [isGuest, plugins],
+    () => resolveSettingsTabs(BUILTIN_PLUGINS, plugins, isGuest, isAdmin),
+    [isAdmin, isGuest, plugins],
   );
 
   const sharingScopes = useMemo(() => resolveSharingScopes(plugins), [plugins]);
 
+  const cdnBase = useMemo(() => resolveCdnBase(settings.resourceCdn), [settings.resourceCdn]);
+
   useEffect(() => {
-    applyGlobalFont(settings.fontConfig);
-  }, [settings.fontConfig]);
+    if (!workspaceReady) return;
+    applyGlobalFont(settings.fontConfig, settings.resourceCdn);
+  }, [workspaceReady, settings.fontConfig, settings.resourceCdn]);
+
+  const animationsEnabled = settings.enableAnimations !== false;
+
+  useEffect(() => {
+    document.documentElement.dataset.orbitAnimations = animationsEnabled ? 'on' : 'off';
+    return () => {
+      delete document.documentElement.dataset.orbitAnimations;
+    };
+  }, [animationsEnabled]);
+
+  useEffect(() => {
+    if (!workspaceReady) return;
+    try {
+      window.localStorage.setItem(LAST_THEME_KEY, resolvedTheme);
+    } catch {
+      // ignore
+    }
+    document.documentElement.dataset.bootTheme = resolvedTheme;
+  }, [workspaceReady, resolvedTheme]);
+
+  useEffect(() => {
+    if (!workspaceReady) {
+      setSplashState('visible');
+      return;
+    }
+    if (!animationsEnabled) {
+      setSplashState('gone');
+      return;
+    }
+    setSplashState('leaving');
+    const timer = window.setTimeout(() => setSplashState('gone'), 250);
+    return () => window.clearTimeout(timer);
+  }, [workspaceReady, animationsEnabled]);
+
+  const appVersion = auth?.version || publicCfg?.version || '0.2.0';
 
   const clearNotifTimer = useCallback((id: string) => {
     const t = notifTimersRef.current.get(id);
@@ -321,6 +440,8 @@ export function App() {
   const dismissNotification = useCallback(
     (id: string) => {
       clearNotifTimer(id);
+      if (id === 'k:http-upload') dismissedProgressKeysRef.current.add('http-upload');
+      if (id === 'k:p2p-transfer') dismissedProgressKeysRef.current.add('p2p-transfer');
       setNotifications((prev) => prev.filter((item) => item.id !== id));
     },
     [clearNotifTimer],
@@ -339,7 +460,9 @@ export function App() {
 
   const pushNotification = useCallback(
     (input: Omit<OrbitNotification, 'id'>, ttlMs = 2800) => {
-      const id = input.key ? `k:${input.key}` : `n:${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const id = input.key
+        ? `k:${input.key}`
+        : `n:${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       clearNotifTimer(id);
       if (ttlMs > 0) {
         const timer = window.setTimeout(() => {
@@ -358,7 +481,6 @@ export function App() {
         }
         const combined = [...prev, nextItem];
         while (combined.length > MAX_NOTIFICATIONS) {
-          // Evict oldest completed/non-progress notification first, keeping active progress cards visible
           const evictIdx = combined.findIndex((x) => x.kind !== 'progress');
           const idxToRemove = evictIdx >= 0 ? evictIdx : 0;
           const [evicted] = combined.splice(idxToRemove, 1);
@@ -405,11 +527,14 @@ export function App() {
   );
 
   const copyText = useCallback(
-    (text: string, label = '已复制') => {
-      if (navigator.clipboard?.writeText) {
-        void navigator.clipboard.writeText(text).catch(() => {});
+    async (text: string, label = '已复制'): Promise<boolean> => {
+      const ok = await copyToClipboard(text);
+      if (ok) {
+        showToast(label);
+      } else {
+        showToast('复制失败，请手动选中复制', true);
       }
-      showToast(label);
+      return ok;
     },
     [showToast],
   );
@@ -463,18 +588,21 @@ export function App() {
   );
 
   const fetchWeather = useCallback(
-    async (wc: UserSettings['weatherConfig'], refresh = false) => {
+    async (wc: UserSettings['weatherConfig'], refresh = false, throwOnError = false) => {
       try {
         const w = await api.getWeather({
           lat: wc.lat,
           lon: wc.lon,
           label: wc.label,
           city: wc.query,
+          stationId: wc.stationId,
+          provider: wc.provider,
+          caiyunToken: wc.caiyunToken,
           refresh,
         });
         setWeather(w);
-      } catch {
-        // ignore offline weather
+      } catch (e) {
+        if (throwOnError) throw e;
       }
     },
     [],
@@ -484,101 +612,165 @@ export function App() {
     try {
       const res = await api.listPlugins();
       setBackendPlugins(res.plugins || []);
-    } catch {
-      // ignore
+    } catch (e) {
+      showToast((e as Error).message || '刷新组件列表失败', true);
     }
-  }, []);
+  }, [showToast]);
 
   const loadWorkspace = useCallback(async () => {
+    loadedRef.current = {
+      bookmarks: false,
+      clips: false,
+      files: false,
+      weather: false,
+      bing: false,
+    };
+
     const st = await api.authStatus();
-    setAuth(st);
-    setZone(st.detected_zone);
 
     if (!st.authenticated) {
       try {
-        const [pub, bingRes] = await Promise.all([
-          api.getPublicConfig(),
-          api.listBingWallpapers().catch(() => ({ items: [], fallback: true })),
-        ]);
-        setPublicCfg(pub);
-        setBingItems(bingRes.items || []);
+        const pub = await api.getPublicConfig();
         const pubPlugins = pub.plugins || [];
-        setBackendPlugins(pubPlugins);
         const mergedPub = mergePluginRecords(BUILTIN_PLUGINS, pubPlugins);
-        const weatherOn =
-          mergedPub.find((p) => p.manifest.id === 'orbit.weather')?.enabled !== false;
+        const weatherRec = mergedPub.find((p) => p.manifest.id === 'orbit.weather');
+        const weatherOn = weatherRec?.enabled !== false && weatherRec?.manifest.access.guest.mode !== 'hidden';
 
         if (st.initialized && pub.allowGuest) {
           const guestSettings = mergeUserSettings(pub);
           guestSettings.visibleItems = {
             ...guestSettings.visibleItems,
-            clock: true,
-            search: true,
-            weather: true,
-            hitokoto: true,
+            clock: guestSettings.visibleItems.clock !== false,
+            search: guestSettings.visibleItems.search !== false,
+            weather: guestSettings.visibleItems.weather !== false,
+            hitokoto: guestSettings.visibleItems.hitokoto !== false,
             monitor: false,
             bookmarks: false,
           };
           guestSettings.hasCustomLayout = false;
           guestSettings.layout = null;
-          setSettings(guestSettings);
-          if (weatherOn) {
-            const pw = await api.getPublicWeather().catch(() => null);
-            if (pw) setWeather(pw);
+
+          applyGlobalFont(guestSettings.fontConfig, guestSettings.resourceCdn);
+
+          // On-demand: only load Bing wallpapers if wallpaperMode is 'bing'
+          const bingItemsNext =
+            guestSettings.wallpaperMode === 'bing'
+              ? (await api.listBingWallpapers().catch(() => ({ items: [] as BingWallpaperItem[] }))).items || []
+              : [];
+          if (guestSettings.wallpaperMode === 'bing') {
+            loadedRef.current.bing = true;
           }
+
+          setAuth(st);
+          setZone(st.detected_zone);
+          setPublicCfg(pub);
+          setBackendPlugins(pubPlugins);
+          setSettings(guestSettings);
+          setBingItems(bingItemsNext);
+          setGroups([]);
+          setBookmarks([]);
+          setClips([]);
+          setFilesData(null);
+          setMetrics(null);
+          setWorkspaceReady(true);
+
+          // On-demand: only fetch public weather if the weather widget is visible
+          if (weatherOn && guestSettings.visibleItems.weather !== false) {
+            loadedRef.current.weather = true;
+            void api
+              .getPublicWeather()
+              .then((pw) => {
+                if (pw) setWeather(pw);
+              })
+              .catch(() => {});
+          } else {
+            setWeather(null);
+          }
+          return;
         }
+
+        setAuth(st);
+        setZone(st.detected_zone);
+        setPublicCfg(pub);
+        setBackendPlugins(pubPlugins);
+        setWorkspaceReady(true);
       } catch {
+        setAuth(st);
+        setZone(st.detected_zone);
         setPublicCfg({ allowGuest: false });
+        setWorkspaceReady(true);
       }
       return;
     }
 
-    setPublicCfg(null);
-    setAuthModalOpen(false);
-    setAuthNotice(null);
-
     const userCanMonitor = st.user?.role === 'admin' || Boolean(st.user?.share_scopes?.monitor);
 
-    const [pluginRes, setRes, bingRes] = await Promise.all([
+    // Phase 1: fast local settings + plugin records (prevents any flash of default/old page)
+    const [pluginRes, setRes] = await Promise.all([
       api.listPlugins().catch(() => ({ plugins: [] as PluginStateRecord[] })),
       api.getSettings(),
-      api.listBingWallpapers().catch(() => ({ items: [], fallback: true })),
     ]);
 
     const mergedRecords = mergePluginRecords(BUILTIN_PLUGINS, pluginRes.plugins || []);
-    setBackendPlugins(pluginRes.plugins || []);
     const enabled = (id: string) =>
       mergedRecords.find((r) => r.manifest.id === id)?.enabled !== false;
 
     const mergedSettings = mergeUserSettings(setRes.settings);
-    setSettings(mergedSettings);
-    setBingItems(bingRes.items || []);
+    applyGlobalFont(mergedSettings.fontConfig, mergedSettings.resourceCdn);
+    document.documentElement.dataset.orbitAnimations =
+      mergedSettings.enableAnimations === false ? 'off' : 'on';
 
-    const [bmRes, clipRes, fileRes, metricRes] = await Promise.all([
-      enabled('orbit.bookmarks')
-        ? api.listBookmarks().catch(() => ({ groups: [], bookmarks: [] }))
-        : Promise.resolve({ groups: [] as BookmarkGroup[], bookmarks: [] as Bookmark[] }),
-      enabled('orbit.clipboard')
-        ? api.listClips().catch(() => ({ clips: [] }))
-        : Promise.resolve({ clips: [] as ClipItem[] }),
-      enabled('orbit.transfer')
-        ? api.listFiles().catch(() => null)
+    // Strict on-demand: only load resources for components that are actually visible
+    const bookmarksVisibleOnBoot =
+      enabled('orbit.bookmarks') && mergedSettings.visibleItems.bookmarks !== false;
+    const monitorVisibleOnBoot =
+      userCanMonitor && enabled('orbit.monitor') && mergedSettings.visibleItems.monitor !== false;
+    const weatherVisibleOnBoot =
+      enabled('orbit.weather') && mergedSettings.visibleItems.weather !== false;
+    const bingNeededOnBoot = mergedSettings.wallpaperMode === 'bing';
+
+    // Fetch only fast local data for currently visible desktop cards before revealing workspace
+    const [bmRes, metricRes] = await Promise.all([
+      bookmarksVisibleOnBoot
+        ? api.listBookmarks().catch(() => ({ groups: [] as BookmarkGroup[], bookmarks: [] as Bookmark[] }))
         : Promise.resolve(null),
-      userCanMonitor && enabled('orbit.monitor')
+      monitorVisibleOnBoot
         ? api
             .getSystemMetrics(mergedSettings.monitorConfig.diskMount)
-            .catch(() => ({ metrics: null }))
-        : Promise.resolve({ metrics: null }),
+            .catch(() => ({ metrics: null as SystemMetrics | null }))
+        : Promise.resolve(null),
     ]);
 
-    setGroups(bmRes.groups);
-    setBookmarks(bmRes.bookmarks);
-    setClips(clipRes.clips);
-    setFilesData(fileRes);
-    setMetrics(metricRes.metrics);
+    if (bookmarksVisibleOnBoot) loadedRef.current.bookmarks = true;
 
-    if (enabled('orbit.weather')) {
-      await fetchWeather(mergedSettings.weatherConfig);
+    // Atomic state commit so first visible frame already has real settings, theme, layout & widgets
+    setAuth(st);
+    setZone(st.detected_zone);
+    setPublicCfg(null);
+    setAuthModalOpen(false);
+    setAuthNotice(null);
+    setBackendPlugins(pluginRes.plugins || []);
+    setSettings(mergedSettings);
+    setGroups(bmRes?.groups || []);
+    setBookmarks(bmRes?.bookmarks || []);
+    setClips([]);
+    setFilesData(null);
+    setMetrics(metricRes?.metrics || null);
+    if (!weatherVisibleOnBoot) setWeather(null);
+    if (!bingNeededOnBoot) setBingItems([]);
+    setWorkspaceReady(true);
+
+    // Kick off optional async network resources strictly on demand
+    if (bingNeededOnBoot) {
+      loadedRef.current.bing = true;
+      void api
+        .listBingWallpapers()
+        .then((res) => setBingItems(res.items || []))
+        .catch(() => {});
+    }
+    if (weatherVisibleOnBoot) {
+      loadedRef.current.weather = true;
+      void fetchWeather(mergedSettings.weatherConfig);
     }
   }, [fetchWeather]);
 
@@ -586,11 +778,34 @@ export function App() {
     void loadWorkspace();
   }, [loadWorkspace]);
 
+  const bookmarksEnabled = isPluginEnabled('orbit.bookmarks');
+  const clipboardEnabled = isPluginEnabled('orbit.clipboard');
   const monitorEnabled = isPluginEnabled('orbit.monitor');
+  const weatherEnabled = isPluginEnabled('orbit.weather');
+
+  const bookmarksVisible = useMemo(
+    () => resolvedWidgets.some((w) => w.key === 'bookmarks' && w.visible),
+    [resolvedWidgets],
+  );
+  const monitorVisible = useMemo(
+    () => resolvedWidgets.some((w) => w.key === 'monitor' && w.visible),
+    [resolvedWidgets],
+  );
+  const weatherVisible = useMemo(
+    () => resolvedWidgets.some((w) => w.key === 'weather' && w.visible),
+    [resolvedWidgets],
+  );
+
+  // On-demand Monitor polling: only active when Monitor card is visible or Monitor settings tab is open
+  const monitorActive =
+    workspaceReady &&
+    canViewMonitor &&
+    monitorEnabled &&
+    (monitorVisible || (settingsModalOpen && settingsTab === 'monitor'));
   const monitorRefreshSec = settings.monitorConfig?.refreshSeconds || 3;
   const monitorMount = settings.monitorConfig?.diskMount || '';
   useEffect(() => {
-    if (!canViewMonitor || !monitorEnabled) return;
+    if (!monitorActive) return;
     const fetchMetrics = () => {
       void api
         .getSystemMetrics(monitorMount)
@@ -600,12 +815,30 @@ export function App() {
     fetchMetrics();
     const id = window.setInterval(fetchMetrics, Math.max(2, monitorRefreshSec) * 1000);
     return () => window.clearInterval(id);
-  }, [canViewMonitor, monitorEnabled, monitorMount, monitorRefreshSec]);
+  }, [monitorActive, monitorMount, monitorRefreshSec]);
 
-  const weatherEnabled = isPluginEnabled('orbit.weather');
+  // On-demand Weather loading & polling: only active when Weather card is visible or Weather settings tab is open
+  const weatherActive =
+    workspaceReady &&
+    (isAuthenticated || isGuest) &&
+    weatherEnabled &&
+    (weatherVisible || (settingsModalOpen && settingsTab === 'weather'));
   const weatherRefreshMin = settings.weatherConfig?.refreshMinutes || 30;
   useEffect(() => {
-    if ((!isAuthenticated && !isGuest) || !weatherEnabled) return;
+    if (!weatherActive) return;
+    if (!loadedRef.current.weather) {
+      loadedRef.current.weather = true;
+      if (isAuthenticated) {
+        void fetchWeather(settings.weatherConfig, false);
+      } else {
+        void api
+          .getPublicWeather()
+          .then((pw) => {
+            if (pw) setWeather(pw);
+          })
+          .catch(() => {});
+      }
+    }
     const id = window.setInterval(() => {
       if (isAuthenticated) {
         void fetchWeather(settings.weatherConfig, true);
@@ -614,19 +847,85 @@ export function App() {
       }
     }, Math.max(5, weatherRefreshMin) * 60 * 1000);
     return () => window.clearInterval(id);
-  }, [fetchWeather, isAuthenticated, isGuest, settings.weatherConfig, weatherEnabled, weatherRefreshMin]);
+  }, [
+    fetchWeather,
+    isAuthenticated,
+    settings.weatherConfig,
+    weatherActive,
+    weatherRefreshMin,
+  ]);
+
+  // On-demand Bookmarks loading when card is revealed, settings tab opens, modal opens, or search activates
+  const bookmarksNeeded =
+    workspaceReady &&
+    isAuthenticated &&
+    bookmarksEnabled &&
+    (bookmarksVisible ||
+      (settingsModalOpen && settingsTab === 'bookmarks') ||
+      bookmarkModalOpen ||
+      searchElevated);
+  useEffect(() => {
+    if (!bookmarksNeeded || loadedRef.current.bookmarks) return;
+    loadedRef.current.bookmarks = true;
+    void refreshBookmarks().catch(() => {});
+  }, [bookmarksNeeded, refreshBookmarks]);
+
+  // On-demand Clipboard loading when drawer / zone panel / search opens
+  const clipsNeeded =
+    workspaceReady &&
+    isAuthenticated &&
+    clipboardEnabled &&
+    (activeDrawer === 'clipboard' || zonePanelOpen || searchElevated);
+  useEffect(() => {
+    if (!clipsNeeded || loadedRef.current.clips) return;
+    loadedRef.current.clips = true;
+    void refreshClips();
+  }, [clipsNeeded, refreshClips]);
+
+  // On-demand Transfer files loading when drawer / zone panel / file manager / search opens
+  const transferNeeded =
+    workspaceReady &&
+    isAuthenticated &&
+    isPluginEnabled('orbit.transfer') &&
+    (activeDrawer === 'files' ||
+      zonePanelOpen ||
+      (settingsModalOpen && settingsTab === 'files') ||
+      searchElevated);
+  useEffect(() => {
+    if (!transferNeeded || loadedRef.current.files) return;
+    loadedRef.current.files = true;
+    void refreshFiles();
+  }, [transferNeeded, refreshFiles]);
+
+  // On-demand Bing wallpaper loading only when Bing wallpaper mode is active
+  useEffect(() => {
+    if (!workspaceReady || settings.wallpaperMode !== 'bing' || loadedRef.current.bing) return;
+    loadedRef.current.bing = true;
+    void api
+      .listBingWallpapers()
+      .then((res) => setBingItems(res.items || []))
+      .catch(() => {});
+  }, [workspaceReady, settings.wallpaperMode]);
 
   const { peers, selfPeerId, wsConnected, p2pProgress, sendFileP2P } = useOrbitWS({
-    enabled: isAuthenticated,
+    enabled: workspaceReady && isAuthenticated && (clipboardEnabled || isPluginEnabled('orbit.transfer')),
     onClipsChanged: (ev) => {
       void refreshClips();
-      if (ev?.action === 'created' && ev.clip && !localClipIdsRef.current.has(ev.clip.id)) {
+      const shouldNotify =
+        ev?.action === 'created' &&
+        Boolean(ev.clip) &&
+        ev.notify !== false &&
+        (!ev.sender_peer_id || ev.sender_peer_id !== selfPeerIdRef.current) &&
+        (!ev.target_peer_id || ev.target_peer_id === selfPeerIdRef.current) &&
+        !localClipIdsRef.current.has(ev.clip!.id);
+
+      if (shouldNotify && ev?.clip) {
         const clip = ev.clip;
         pushNotification(
           {
             kind: 'clipboard',
-            title: '收到新剪贴板',
-            meta: `${clip.device || '其他设备'} · 实时同步`,
+            title: ev.target_peer_id ? '收到定向剪贴板' : '收到新剪贴板',
+            meta: `${clip.device || '其他设备'}`,
             msg: clip.content || '新剪贴板内容',
             imageUrl: clip.kind === 'image' ? clip.image_path : undefined,
             copyValue: clip.kind !== 'image' ? clip.content : undefined,
@@ -638,12 +937,20 @@ export function App() {
     },
     onFilesChanged: (ev) => {
       void refreshFiles();
-      if (ev?.action === 'created' && ev.file && !localFileIdsRef.current.has(ev.file.id)) {
+      const shouldNotify =
+        ev?.action === 'created' &&
+        Boolean(ev.file) &&
+        ev.notify !== false &&
+        (!ev.sender_peer_id || ev.sender_peer_id !== selfPeerIdRef.current) &&
+        (!ev.target_peer_id || ev.target_peer_id === selfPeerIdRef.current) &&
+        !localFileIdsRef.current.has(ev.file!.id);
+
+      if (shouldNotify && ev?.file) {
         const f = ev.file;
         pushNotification(
           {
             kind: 'file',
-            title: '收到新暂存文件',
+            title: ev.target_peer_id ? '收到定向文件' : '收到新文件',
             meta: `${formatBytes(f.size_bytes)} · ${f.zone.toUpperCase()}`,
             msg: f.orig_name,
             downloadUrl: `/api/files/${f.id}/download`,
@@ -658,8 +965,8 @@ export function App() {
       pushNotification(
         {
           kind: 'file',
-          title: info.direction === 'receive' ? 'P2P 文件接收完成' : 'P2P 直传完成',
-          meta: `${formatBytes(info.sizeBytes)} · 均速 ${formatSpeed(info.speedBps)}`,
+          title: info.direction === 'receive' ? 'P2P 接收完成' : 'P2P 直传完成',
+          meta: `${formatBytes(info.sizeBytes)} · ${formatSpeed(info.speedBps)}`,
           msg: info.fileName,
           drawerTarget: 'files',
         },
@@ -669,38 +976,78 @@ export function App() {
   });
 
   useEffect(() => {
-    if (p2pProgress) {
-      pushNotification(
-        {
-          key: 'p2p-transfer',
-          kind: 'progress',
-          title: p2pProgress.direction === 'receive' ? '正在 P2P 接收文件' : '正在 P2P 直传文件',
-          msg: p2pProgress.fileName,
-          drawerTarget: 'files',
-          progress: {
-            direction: p2pProgress.direction,
-            percent: p2pProgress.percent,
-            speedBps: p2pProgress.speedBps,
-            transferredBytes: p2pProgress.transferredBytes,
-            totalBytes: p2pProgress.totalBytes,
-          },
-        },
-        0,
-      );
-    } else {
+    selfPeerIdRef.current = selfPeerId;
+  }, [selfPeerId]);
+
+  useEffect(() => {
+    if (!p2pProgress) {
+      dismissedProgressKeysRef.current.delete('p2p-transfer');
       dismissNotificationByKey('p2p-transfer');
+      return;
     }
-  }, [dismissNotificationByKey, p2pProgress, pushNotification]);
+    if (activeDrawer === 'files' || dismissedProgressKeysRef.current.has('p2p-transfer')) {
+      dismissNotificationByKey('p2p-transfer');
+      return;
+    }
+    pushNotification(
+      {
+        key: 'p2p-transfer',
+        kind: 'progress',
+        title: p2pProgress.direction === 'receive' ? '正在 P2P 接收' : '正在 P2P 发送',
+        msg: p2pProgress.fileName,
+        drawerTarget: 'files',
+        progress: {
+          direction: p2pProgress.direction,
+          percent: p2pProgress.percent,
+          speedBps: p2pProgress.speedBps,
+          transferredBytes: p2pProgress.transferredBytes,
+          totalBytes: p2pProgress.totalBytes,
+        },
+      },
+      0,
+    );
+  }, [activeDrawer, dismissNotificationByKey, p2pProgress, pushNotification]);
+
+  useEffect(() => {
+    if (!uploadProgress) {
+      dismissedProgressKeysRef.current.delete('http-upload');
+      dismissNotificationByKey('http-upload');
+      return;
+    }
+    if (activeDrawer === 'files' || dismissedProgressKeysRef.current.has('http-upload')) {
+      dismissNotificationByKey('http-upload');
+      return;
+    }
+    pushNotification(
+      {
+        key: 'http-upload',
+        kind: 'progress',
+        title: '正在上传文件',
+        msg: uploadProgress.fileName,
+        drawerTarget: 'files',
+        progress: {
+          direction: 'upload',
+          percent: uploadProgress.percent,
+          speedBps: uploadProgress.speedBps,
+          transferredBytes: uploadProgress.loaded,
+          totalBytes: uploadProgress.total,
+        },
+      },
+      0,
+    );
+  }, [activeDrawer, dismissNotificationByKey, pushNotification, uploadProgress]);
 
   const persistSettings = useCallback(
     (next: UserSettings) => {
       if (!isAuthenticated) return;
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
-        void api.putSettings(next).catch(() => {});
+        void api.putSettings(next).catch((e) => {
+          showToast((e as Error).message || '保存设置失败', true);
+        });
       }, 450);
     },
-    [isAuthenticated],
+    [isAuthenticated, showToast],
   );
 
   const updateSettings = useCallback(
@@ -715,6 +1062,54 @@ export function App() {
       });
     },
     [persistSettings],
+  );
+
+  const toggleDayNight = useCallback(
+    (ev?: React.MouseEvent<HTMLElement>) => {
+      const next: 'dark' | 'light' = resolvedTheme === 'dark' ? 'light' : 'dark';
+      runThemeTransition(
+        () => {
+          if (!isAuthenticated) {
+            setGuestTheme(next);
+            try {
+              window.localStorage.setItem(GUEST_THEME_KEY, next);
+            } catch {
+              // ignore storage restrictions
+            }
+          } else {
+            updateSettings({ themeMode: next, glassTheme: next });
+          }
+        },
+        ev,
+        next,
+      );
+    },
+    [isAuthenticated, resolvedTheme, updateSettings],
+  );
+
+  const isWidgetCardless = useCallback(
+    (key: string, defaultCardless = false): boolean => {
+      const explicit = settings.cardlessItems?.[key];
+      if (typeof explicit === 'boolean') return explicit;
+      const rw = resolvedWidgets.find((w) => w.key === key);
+      if (rw) return rw.cardless;
+      return defaultCardless;
+    },
+    [resolvedWidgets, settings.cardlessItems],
+  );
+
+  const toggleWidgetCardless = useCallback(
+    (key: string, defaultCardless = false) => {
+      const cur = isWidgetCardless(key, defaultCardless);
+      updateSettings((prev) => ({
+        ...prev,
+        cardlessItems: {
+          ...(prev.cardlessItems || {}),
+          [key]: !cur,
+        },
+      }));
+    },
+    [isWidgetCardless, updateSettings],
   );
 
   const localWps = settings.localWallpapers || [];
@@ -752,34 +1147,23 @@ export function App() {
         setBackendPlugins(res.plugins || []);
         const rec = (res.plugins || []).find((p) => p.manifest.id === id);
         const label = rec?.manifest.name || id;
-        showToast(`${enabled ? '已启用' : '已禁用'}插件：${label}`);
+        showToast(`${enabled ? '已启用' : '已禁用'}：${label}`);
 
         if (enabled) {
-          if (id === 'orbit.bookmarks') await refreshBookmarks().catch(() => {});
-          if (id === 'orbit.clipboard') await refreshClips();
-          if (id === 'orbit.transfer') await refreshFiles();
-          if (id === 'orbit.monitor') await refreshMetrics();
-          if (id === 'orbit.weather') await fetchWeather(settings.weatherConfig, false);
+          if (id === 'orbit.bookmarks') loadedRef.current.bookmarks = false;
+          if (id === 'orbit.clipboard') loadedRef.current.clips = false;
+          if (id === 'orbit.transfer') loadedRef.current.files = false;
+          if (id === 'orbit.weather') loadedRef.current.weather = false;
         } else {
           if (id === 'orbit.clipboard' && activeDrawer === 'clipboard') setActiveDrawer(null);
           if (id === 'orbit.transfer' && activeDrawer === 'files') setActiveDrawer(null);
           if (id === 'orbit.bookmarks') setBookmarkModalOpen(false);
-          if (id === 'orbit.monitor') setMonitorModalOpen(false);
         }
       } catch (e) {
-        showToast((e as Error).message || '更新插件状态失败', true);
+        showToast((e as Error).message || '更新组件状态失败', true);
       }
     },
-    [
-      activeDrawer,
-      fetchWeather,
-      refreshBookmarks,
-      refreshClips,
-      refreshFiles,
-      refreshMetrics,
-      settings.weatherConfig,
-      showToast,
-    ],
+    [activeDrawer, showToast],
   );
 
   const savePluginConfig = useCallback(
@@ -787,9 +1171,25 @@ export function App() {
       try {
         const res = await api.updatePlugin(id, { config });
         setBackendPlugins(res.plugins || []);
-        showToast('已保存插件配置');
+        showToast('已保存组件配置');
       } catch (e) {
         showToast((e as Error).message || '保存配置失败', true);
+      }
+    },
+    [showToast],
+  );
+
+  const updatePluginPolicy = useCallback(
+    async (
+      id: string,
+      patch: { visibility?: PluginVisibilityOverride; style?: PluginStyleOverride },
+    ) => {
+      try {
+        const res = await api.updatePlugin(id, patch);
+        setBackendPlugins(res.plugins || []);
+        showToast('已保存组件权限与样式');
+      } catch (e) {
+        showToast((e as Error).message || '保存组件策略失败', true);
       }
     },
     [showToast],
@@ -812,8 +1212,10 @@ export function App() {
     guideV,
     guideH,
     draggingId,
+    resizingDim,
     startDragItem,
     startResizeItem,
+    resetItemHeight,
   } = useFreeLayout({
     canvasRef,
     widgets: resolvedWidgets,
@@ -823,7 +1225,7 @@ export function App() {
     depsKey: [
       isGuest ? 'guest' : 'auth',
       canViewMonitor ? 'mon' : 'nomon',
-      resolvedWidgets.map((w) => `${w.key}:${w.visible}`).join(','),
+      resolvedWidgets.map((w) => `${w.key}:${w.visible}:${w.cardless}`).join(','),
       bookmarks.length,
       activeGroupId,
       settings.dockStyle,
@@ -836,27 +1238,37 @@ export function App() {
       settings.weatherConfig.customText || '',
       settings.hitokotoConfig.showAuthor ? 'ha' : 'nha',
       settings.searchIconOnly,
+      settings.footer.enabled ? 'fe' : 'nfe',
+      settings.footer.links.length,
     ].join('-'),
   });
 
   const transferEnabled = isPluginEnabled('orbit.transfer');
 
   const uploadFiles = useCallback(
-    async (fileList: FileList | File[]) => {
+    async (
+      fileList: FileList | File[],
+      opts?: { ttlHours?: number; permanent?: boolean; targetPeerId?: string; openPopover?: boolean },
+    ) => {
       if (!transferEnabled) {
-        showToast('文件快传插件已禁用', true);
+        showToast('文件快传组件已禁用', true);
         return;
       }
       if (!isAuthenticated) {
-        promptGuestLogin('文件上传与快传需要登录后使用');
+        promptGuestLogin('上传文件需要登录后使用');
         return;
       }
       const files = Array.from(fileList);
       if (!files.length) return;
-      setActiveDrawer('files');
+      if (opts?.openPopover !== false) {
+        setAccountOpen(false);
+        setZonePanelOpen(false);
+        setActiveDrawer('files');
+      }
       setUploadError(null);
 
       for (const file of files) {
+        dismissedProgressKeysRef.current.delete('http-upload');
         const initProg = {
           fileName: file.name,
           percent: 0,
@@ -865,71 +1277,56 @@ export function App() {
           speedBps: 0,
         };
         setUploadProgress(initProg);
-        pushNotification(
-          {
-            key: 'http-upload',
-            kind: 'progress',
-            title: '正在上传到暂存箱',
-            msg: file.name,
-            drawerTarget: 'files',
-            progress: {
-              direction: 'upload',
-              percent: 0,
-              speedBps: 0,
-              transferredBytes: 0,
-              totalBytes: file.size,
-            },
-          },
-          0,
-        );
+        let uploadFinished = false;
         try {
-          const uploaded = await api.uploadFileWithProgress(file, 24, (prog) => {
-            setUploadProgress({ fileName: file.name, ...prog });
-            pushNotification(
-              {
-                key: 'http-upload',
-                kind: 'progress',
-                title: '正在上传到暂存箱',
-                msg: file.name,
-                drawerTarget: 'files',
-                progress: {
-                  direction: 'upload',
-                  percent: prog.percent,
-                  speedBps: prog.speedBps,
-                  transferredBytes: prog.loaded,
-                  totalBytes: prog.total,
-                },
-              },
-              0,
-            );
-          });
+          const uploaded = await api.uploadFileWithProgress(
+            file,
+            opts?.ttlHours ?? 24,
+            (prog) => {
+              if (uploadFinished) return;
+              setUploadProgress({ fileName: file.name, ...prog });
+            },
+            {
+              permanent: opts?.permanent,
+              targetPeerId: opts?.targetPeerId,
+            },
+          );
+          uploadFinished = true;
+          setUploadProgress(null);
+          dismissNotificationByKey('http-upload');
           if (uploaded.file?.id) {
             markLocalFileCreated(uploaded.file.id);
           }
-          dismissNotificationByKey('http-upload');
           await refreshFiles();
-          showToast(`已暂存：${file.name}`);
+          showToast(`已上传：${file.name}`);
         } catch (e) {
+          uploadFinished = true;
+          setUploadProgress(null);
           dismissNotificationByKey('http-upload');
           if (e instanceof APIError && e.status === 413) {
-            const msg = `当前为 ${String(e.data.zone || zone).toUpperCase()} 访问，单文件限 ${String(e.data.limit_mb || auth?.limits.wan_mb || 100)} MB（同局域网设备可用上方 P2P 绕过）`;
+            const errZone = String(e.data.zone || zone).toUpperCase();
+            const errLimitMB = Number(e.data.limit_mb ?? 0);
+            const msg =
+              errLimitMB > 0
+                ? `当前为 ${errZone} 访问，单文件限 ${formatLimitMB(errLimitMB)}`
+                : `当前为 ${errZone} 访问，文件超过允许大小限制`;
             setUploadError(msg);
-            showToast('超出当前网络单文件大小限制', true);
+            showToast(msg, true);
           } else {
             showToast((e as Error).message || '上传失败', true);
           }
         } finally {
+          uploadFinished = true;
+          dismissNotificationByKey('http-upload');
           setUploadProgress(null);
         }
       }
     },
     [
-      auth?.limits.wan_mb,
       dismissNotificationByKey,
       isAuthenticated,
       markLocalFileCreated,
       promptGuestLogin,
-      pushNotification,
       refreshFiles,
       showToast,
       transferEnabled,
@@ -997,7 +1394,6 @@ export function App() {
         setSettingsModalOpen(false);
         setAuthModalOpen(false);
         setBookmarkModalOpen(false);
-        setMonitorModalOpen(false);
         setShareTarget(null);
         return;
       }
@@ -1022,6 +1418,8 @@ export function App() {
         if (matchedDrawer.guestLocked) {
           promptGuestLogin(matchedDrawer.guestPrompt || `${matchedDrawer.drawer.title}需要登录后使用`);
         } else {
+          setAccountOpen(false);
+          setZonePanelOpen(false);
           setActiveDrawer((cur) =>
             cur === matchedDrawer.drawer.id ? null : matchedDrawer.drawer.id,
           );
@@ -1036,6 +1434,17 @@ export function App() {
       }
       if (!target.closest('#zonePanel') && !target.closest('#zoneTrigger')) {
         setZonePanelOpen(false);
+      }
+      if (
+        !target.closest('#drawerPopover') &&
+        !target.closest('#mobileCapsule') &&
+        !target.closest('#notificationStack') &&
+        !target.closest('[data-drawer-trigger]') &&
+        !target.closest('[role="listbox"]') &&
+        !target.closest('.orbit-select-trigger') &&
+        !target.closest('.orbit-modal-shell')
+      ) {
+        setActiveDrawer(null);
       }
     };
 
@@ -1070,11 +1479,32 @@ export function App() {
     if (bingItems.length > 0) {
       setBingIdx((i) => (i + 1) % bingItems.length);
       updateSettings({ wallpaperMode: 'bing', localWallpaperRotate: false });
-    } else {
-      const nextPreset = (settings.wallpaperPreset + 1) % PRESET_WALLPAPERS.length;
-      updateSettings({ wallpaperMode: 'preset', wallpaperPreset: nextPreset });
+      return;
     }
-  }, [bingItems.length, settings.wallpaperPreset, updateSettings]);
+    if (settings.bingAuto || settings.wallpaperMode === 'bing') {
+      loadedRef.current.bing = true;
+      void api
+        .listBingWallpapers()
+        .then((res) => {
+          const list = res.items || [];
+          if (list.length > 0) {
+            setBingItems(list);
+            setBingIdx(0);
+            updateSettings({ wallpaperMode: 'bing', localWallpaperRotate: false });
+          } else {
+            const nextPreset = (settings.wallpaperPreset + 1) % PRESET_WALLPAPERS.length;
+            updateSettings({ wallpaperMode: 'preset', wallpaperPreset: nextPreset });
+          }
+        })
+        .catch(() => {
+          const nextPreset = (settings.wallpaperPreset + 1) % PRESET_WALLPAPERS.length;
+          updateSettings({ wallpaperMode: 'preset', wallpaperPreset: nextPreset });
+        });
+      return;
+    }
+    const nextPreset = (settings.wallpaperPreset + 1) % PRESET_WALLPAPERS.length;
+    updateSettings({ wallpaperMode: 'preset', wallpaperPreset: nextPreset });
+  }, [bingItems.length, settings.bingAuto, settings.wallpaperMode, settings.wallpaperPreset, updateSettings]);
 
   const handleNextLocalWallpaper = useCallback(() => {
     if (localWps.length === 0) return;
@@ -1105,9 +1535,9 @@ export function App() {
             },
           ],
         }));
-        showToast('已加入本地壁纸库并应用');
+        showToast('已添加并应用壁纸');
       } catch (e) {
-        showToast((e as Error).message || '上传失败', true);
+        showToast((e as Error).message || '上传壁纸失败', true);
       }
     },
     [showToast, updateSettings],
@@ -1115,30 +1545,32 @@ export function App() {
 
   const handleDeleteLocalWallpaper = useCallback(
     async (url: string) => {
-      if (url.startsWith('/api/wallpaper/custom/')) {
-        const name = url.split('/').pop() || '';
-        if (name) {
-          await api.deleteCustomWallpaper(name).catch(() => {});
+      try {
+        if (url.startsWith('/api/wallpaper/custom/')) {
+          const name = url.split('/').pop() || '';
+          if (name) await api.deleteCustomWallpaper(name);
         }
+        updateSettings((prev) => {
+          const remaining = (prev.localWallpapers || []).filter((x) => x.url !== url);
+          const nextCustom =
+            prev.wallpaperCustom === url ? remaining[0]?.url || '' : prev.wallpaperCustom;
+          return {
+            ...prev,
+            localWallpapers: remaining,
+            wallpaperCustom: nextCustom,
+            localWallpaperRotate: remaining.length < 2 ? false : prev.localWallpaperRotate,
+            wallpaperMode:
+              prev.wallpaperMode === 'local' && remaining.length === 0
+                ? prev.bingAuto
+                  ? 'bing'
+                  : 'preset'
+                : prev.wallpaperMode,
+          };
+        });
+        showToast('已删除壁纸');
+      } catch (e) {
+        showToast((e as Error).message || '删除壁纸失败', true);
       }
-      updateSettings((prev) => {
-        const remaining = (prev.localWallpapers || []).filter((x) => x.url !== url);
-        const nextCustom =
-          prev.wallpaperCustom === url ? remaining[0]?.url || '' : prev.wallpaperCustom;
-        return {
-          ...prev,
-          localWallpapers: remaining,
-          wallpaperCustom: nextCustom,
-          localWallpaperRotate: remaining.length < 2 ? false : prev.localWallpaperRotate,
-          wallpaperMode:
-            prev.wallpaperMode === 'local' && remaining.length === 0
-              ? prev.bingAuto
-                ? 'bing'
-                : 'preset'
-              : prev.wallpaperMode,
-        };
-      });
-      showToast('已移除本地壁纸');
     },
     [showToast, updateSettings],
   );
@@ -1146,11 +1578,12 @@ export function App() {
   const startLayoutEdit = useCallback(() => {
     if (isGuest) return;
     if (window.innerWidth < 768) {
-      showToast('请在宽屏桌面视图下拖拽自由布局', true);
+      showToast('请在宽屏桌面视图下拖拽布局', true);
       return;
     }
+    setActiveDrawer(null);
     setLayoutEditing(true);
-    showToast('随意拖动组件位置或右边缘缩放宽度');
+    showToast('拖动组件调整位置，拖边缘或右下角自由调整大小');
   }, [isGuest, showToast]);
 
   const resetLayout = useCallback(() => {
@@ -1169,6 +1602,7 @@ export function App() {
   const hostRef = useRef<HostAPI | null>(null);
 
   const host: HostAPI = {
+    appVersion,
     authInitialized: Boolean(auth?.initialized),
     authenticated: isAuthenticated,
     user: auth?.user || null,
@@ -1180,11 +1614,16 @@ export function App() {
     clientIp: auth?.client_ip || '',
     setZone,
     cycleZone,
-    limits: auth?.limits || { lan_mb: 10240, ts_mb: 2048, wan_mb: 100 },
+    limits: auth?.limits || { lan_mb: 0, ts_mb: 2048, wan_mb: 100 },
     publicConfig: publicCfg,
 
     settings,
+    cdnBase,
+    resolvedTheme,
+    toggleDayNight,
     updateSettings,
+    isWidgetCardless,
+    toggleWidgetCardless,
     layoutEditing: layoutEditing && !isGuest,
     setLayoutEditing,
     startLayoutEdit,
@@ -1199,6 +1638,7 @@ export function App() {
     refreshPlugins,
     togglePlugin,
     savePluginConfig,
+    updatePluginPolicy,
 
     activeDrawer,
     openDrawer: (drawerId) => {
@@ -1218,31 +1658,46 @@ export function App() {
     toast: showToast,
     copyText,
     rotateToken: async () => {
-      const res = await api.rotateToken();
-      setAuth((prev) =>
-        prev && prev.user
-          ? { ...prev, user: { ...prev.user, api_token: res.api_token } }
-          : prev,
-      );
-      showToast('已重置 API Token');
+      try {
+        const res = await api.rotateToken();
+        setAuth((prev) =>
+          prev && prev.user
+            ? { ...prev, user: { ...prev.user, api_token: res.api_token } }
+            : prev,
+        );
+        showToast('已重置 API Token');
+      } catch (e) {
+        showToast((e as Error).message || '重置 Token 失败', true);
+        throw e;
+      }
     },
     uploadAvatar: async (file) => {
-      const res = await api.uploadAvatar(file);
-      setAuth((prev) =>
-        prev && prev.user
-          ? { ...prev, user: { ...prev.user, avatar: res.avatar } }
-          : prev,
-      );
-      showToast('头像已更新');
+      try {
+        const res = await api.uploadAvatar(file);
+        setAuth((prev) =>
+          prev && prev.user
+            ? { ...prev, user: { ...prev.user, avatar: res.avatar } }
+            : prev,
+        );
+        showToast('头像已更新');
+      } catch (e) {
+        showToast((e as Error).message || '上传头像失败', true);
+        throw e;
+      }
     },
     deleteAvatar: async () => {
-      await api.deleteAvatar();
-      setAuth((prev) =>
-        prev && prev.user
-          ? { ...prev, user: { ...prev.user, avatar: '' } }
-          : prev,
-      );
-      showToast('已恢复默认头像');
+      try {
+        await api.deleteAvatar();
+        setAuth((prev) =>
+          prev && prev.user
+            ? { ...prev, user: { ...prev.user, avatar: '' } }
+            : prev,
+        );
+        showToast('已恢复默认头像');
+      } catch (e) {
+        showToast((e as Error).message || '重置头像失败', true);
+        throw e;
+      }
     },
 
     searchInputRef,
@@ -1278,23 +1733,26 @@ export function App() {
       if (!ids.length) return;
       const res = await api.batchDeleteBookmarks(ids);
       await refreshBookmarks();
-      showToast(`已批量删除 ${res.deleted} 条书签`);
+      showToast(`已删除 ${res.deleted} 条书签`);
     },
     batchMoveBookmarks: async (ids, groupId) => {
       if (!ids.length) return;
       const res = await api.batchMoveBookmarks(ids, groupId);
       await refreshBookmarks();
-      showToast(`已移动 ${res.moved} 条书签到目标分组`);
+      showToast(`已移动 ${res.moved} 条书签`);
     },
     reorderBookmarks: (ids) => {
       const map = new Map(bookmarks.map((b) => [b.id, b]));
       const reordered = ids.map((id) => map.get(id)).filter((x): x is Bookmark => Boolean(x));
       setBookmarks(reordered);
-      void api.reorderBookmarks(ids);
+      void api.reorderBookmarks(ids).catch((e) => {
+        showToast((e as Error).message || '保存排序失败', true);
+      });
     },
     createGroup: async (name) => {
       const res = await api.createGroup(name);
       await refreshBookmarks();
+      showToast(`已新建分组「${res.group.name}」`);
       return res.group;
     },
     updateGroup: async (id, name) => {
@@ -1324,15 +1782,13 @@ export function App() {
         const res = await api.importBrowserBookmarks(html, groupName);
         await refreshBookmarks();
         setActiveGroupId(res.group_id);
-        showToast(`成功导入 ${res.imported} 个书签到「${res.group_name}」`);
+        showToast(`成功导入 ${res.imported} 条书签到「${res.group_name}」`);
         return true;
       } catch (e) {
         showToast((e as Error).message || '导入失败', true);
         return false;
       }
     },
-
-    openMonitorModal: () => setMonitorModalOpen(true),
 
     clips,
     refreshClips,
@@ -1355,7 +1811,7 @@ export function App() {
     weather,
     refreshWeather: async (override, refresh = true) => {
       const merged = { ...settings.weatherConfig, ...(override || {}) };
-      await fetchWeather(merged, refresh);
+      await fetchWeather(merged, refresh, true);
     },
 
     metrics,
@@ -1369,19 +1825,67 @@ export function App() {
 
     searchAcrossPlugins: (q: string): SearchSuggestion[] => {
       const h = hostRef.current || host;
-      return collectSearchSuggestions(q, BUILTIN_PLUGINS, plugins, isGuest, h);
+      return collectSearchSuggestions(q, BUILTIN_PLUGINS, plugins, isGuest, h, isAdmin);
     },
     resolveUrl: (bm: Bookmark) => getBookmarkActiveUrl(bm, zone),
     apiFetch,
   };
   hostRef.current = host;
 
-  if (!auth || (!isAuthenticated && publicCfg === null)) {
+  const renderBootSplash = (state: 'visible' | 'leaving') => {
+    const bootTheme = workspaceReady ? resolvedTheme : readLastBootTheme();
+    const isLight = bootTheme === 'light';
     return (
-      <div className="min-h-screen w-full bg-slate-950 text-white flex items-center justify-center text-xs">
-        正在加载 Orbit · 星轨...
+      <div
+        className="orbit-boot-splash"
+        data-state={state}
+        aria-label="正在加载 Orbit"
+        style={{
+          background: isLight
+            ? 'radial-gradient(circle at 50% 38%, rgba(99, 102, 241, 0.14), transparent 58%), #eef2ff'
+            : 'radial-gradient(circle at 50% 38%, rgba(99, 102, 241, 0.16), transparent 58%), #060b19',
+          color: isLight ? '#0f172a' : '#f8fafc',
+        }}
+      >
+        <div className="relative w-[76px] h-[76px] flex items-center justify-center">
+          <span
+            className="orbit-boot-ring-outer absolute inset-0 rounded-full"
+            style={{
+              border: '1.5px solid rgba(129, 140, 248, 0.22)',
+              borderTopColor: '#818cf8',
+            }}
+          />
+          <span
+            className="orbit-boot-ring-inner absolute inset-[9px] rounded-full"
+            style={{
+              border: '1.5px solid rgba(56, 189, 248, 0.18)',
+              borderBottomColor: '#38bdf8',
+            }}
+          />
+          <img
+            src="/apple-touch-icon.png"
+            alt="Orbit"
+            className="w-[38px] h-[38px] rounded-[12px] shadow-lg select-none"
+          />
+        </div>
+        <div className="text-[13px] font-semibold tracking-wider opacity-90">Orbit · 星轨</div>
+        <div
+          className="w-32 h-[3px] rounded-full overflow-hidden"
+          style={{ background: 'rgba(148, 163, 184, 0.2)' }}
+        >
+          <div
+            className="orbit-boot-bar-sweep w-[45%] h-full rounded-full"
+            style={{
+              background: 'linear-gradient(90deg, transparent, #6366f1, #38bdf8, transparent)',
+            }}
+          />
+        </div>
       </div>
     );
+  };
+
+  if (!workspaceReady || !auth || (!isAuthenticated && publicCfg === null)) {
+    return renderBootSplash('visible');
   }
 
   if (!isAuthenticated && !isGuest) {
@@ -1390,35 +1894,29 @@ export function App() {
         <AuthScreen
           initialized={auth.initialized}
           initialShareCode={initialShareCode}
+          theme={resolvedTheme}
+          onToggleTheme={toggleDayNight}
           onAuthenticated={loadWorkspace}
           onToast={showToast}
         />
         <div
-          data-glass="dark"
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center gap-2 pointer-events-none w-full max-w-sm px-4"
-          style={
-            {
-              '--glass-strong-rgb': '16, 20, 32',
-              '--glass-alpha': '0.45',
-              '--glass-blur': '22px',
-              '--glass-border': 'rgba(255, 255, 255, 0.18)',
-              '--glass-highlight': 'rgba(255, 255, 255, 0.16)',
-            } as React.CSSProperties
-          }
+          data-glass={resolvedTheme}
+          className="orbit-shell fixed top-4 left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center gap-2 pointer-events-none w-full max-w-sm px-4"
         >
           {notifications.map((t) => (
             <div
               key={t.id}
-              className="pointer-events-auto glass-strong rounded-full px-4 py-2 text-xs flex items-center gap-2 toast-slide-down text-white shadow-lg"
+              className="pointer-events-auto glass-strong rounded-full px-4 py-2 text-xs flex items-center gap-2 toast-slide-down shadow-lg"
             >
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0"
-                style={{ background: t.warn ? '#fbbf24' : '#34d399' }}
+                style={{ background: t.warn ? 'var(--warn)' : 'var(--ok)' }}
               />
               <span>{t.msg}</span>
             </div>
           ))}
         </div>
+        {splashState === 'leaving' && renderBootSplash('leaving')}
       </>
     );
   }
@@ -1440,8 +1938,8 @@ export function App() {
     backgroundImage = `url("${item.url}")`;
   }
 
-  const blurPct = Math.max(0, Math.min(100, settings.glassBlur ?? 55));
-  const rCard = Math.max(0, Math.min(36, settings.glassRadius ?? 16));
+  const blurPct = Math.max(0, Math.min(100, settings.glassBlur ?? 0));
+  const rCard = Math.max(0, Math.min(36, settings.glassRadius ?? 10));
   const rLg = Math.round(rCard * 0.72);
   const rSm = Math.round(rCard * 0.45);
 
@@ -1453,7 +1951,8 @@ export function App() {
         className={`orbit-shell relative min-h-[100dvh] w-full flex flex-col select-none ${
           layoutEditing && !isGuest ? 'layout-editing' : ''
         }`}
-        data-glass={settings.glassTheme}
+        data-glass={resolvedTheme}
+        data-theme={resolvedTheme}
         style={
           {
             '--glass-blur': `${((blurPct / 100) * 40).toFixed(1)}px`,
@@ -1468,18 +1967,18 @@ export function App() {
         <div className="wallpaper-layer" style={{ backgroundImage }} />
         <div className="wallpaper-dim" />
         {layoutEditing && !isGuest && <div className="canvas-grid-bg" />}
-        {guideV !== null && <div className="snap-guide-v" style={{ left: `${guideV}px` }} />}
-        {guideH !== null && <div className="snap-guide-h" style={{ top: `${guideH}px` }} />}
 
         <TopBar
           snap={snap}
           onToggleSnap={setSnap}
           onToggleZonePanel={() => {
             setAccountOpen(false);
+            setActiveDrawer(null);
             setZonePanelOpen((v) => !v);
           }}
           onToggleAccount={() => {
             setZonePanelOpen(false);
+            setActiveDrawer(null);
             setAccountOpen((v) => !v);
           }}
         />
@@ -1494,10 +1993,18 @@ export function App() {
             }
           }}
         >
+          {guideV !== null && <div className="snap-guide-v" style={{ left: `${guideV}px` }} />}
+          {guideH !== null && <div className="snap-guide-h" style={{ top: `${guideH}px` }} />}
+
           {visibleCanvasWidgets.map((rw) => {
             const Comp = rw.Component;
             const isElevatedSearch = rw.key === 'search' && searchElevated;
             const label = rw.widget.label || rw.manifest.name;
+            const supportsCardless = rw.manifest.style?.supportsCardless !== false;
+            const defaultCardless = Boolean(
+              rw.record.style?.cardless ?? rw.manifest.style?.defaultCardless,
+            );
+
             return (
               <div
                 key={rw.key}
@@ -1510,29 +2017,73 @@ export function App() {
                 }`}
               >
                 <div className="edit-chrome hidden [.layout-editing_&]:flex absolute -top-7 left-1/2 -translate-x-1/2 glass-strong rounded-full px-2.5 py-0.5 items-center gap-2 text-xs whitespace-nowrap z-30">
-                  <span>
-                    ⋮⋮ {label}
-                    {rw.key === 'bookmarks' ? '（拖右缘调宽）' : ''}
-                  </span>
+                  <span>⋮⋮ {label}</span>
+                  {supportsCardless && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleWidgetCardless(rw.key, defaultCardless);
+                      }}
+                      className="opacity-75 hover:opacity-100 cursor-pointer flex items-center"
+                      title={rw.cardless ? '切换为卡片样式' : '切换为无卡片样式'}
+                    >
+                      {rw.cardless ? (
+                        <Square className="w-3 h-3" />
+                      ) : (
+                        <SquareDashed className="w-3 h-3" />
+                      )}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() =>
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
                       updateSettings({
                         visibleItems: { ...settings.visibleItems, [rw.key]: false },
-                      })
-                    }
+                      });
+                    }}
                     className="opacity-70 hover:opacity-100 cursor-pointer"
+                    title="隐藏组件"
                   >
                     <X className="w-3 h-3" />
                   </button>
                 </div>
 
                 {layoutEditing && !isGuest && rw.widget.resizable && (
-                  <div
-                    className="resize-handle"
-                    onPointerDown={(e) => startResizeItem(rw.key, e)}
-                    title="拖动调节宽度"
-                  />
+                  <>
+                    <div
+                      className="resize-handle resize-handle-e"
+                      onPointerDown={(e) => startResizeItem(rw.key, e, 'e')}
+                      title="拖动调节宽度"
+                    />
+                    <div
+                      className="resize-handle resize-handle-s"
+                      onPointerDown={(e) => startResizeItem(rw.key, e, 's')}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        resetItemHeight(rw.key);
+                      }}
+                      title="拖动调节高度（双击恢复自适应）"
+                    />
+                    <div
+                      className="resize-handle resize-handle-se"
+                      onPointerDown={(e) => startResizeItem(rw.key, e, 'se')}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        resetItemHeight(rw.key);
+                      }}
+                      title="拖动自由调节宽高（双击恢复自适应高度）"
+                    />
+                  </>
+                )}
+
+                {resizingDim?.id === rw.key && (
+                  <div className="resize-dim-badge font-mono">
+                    {resizingDim.w} × {resizingDim.h ?? 'auto'}
+                  </div>
                 )}
 
                 {Comp ? (
@@ -1547,6 +2098,7 @@ export function App() {
                     manifest={rw.manifest}
                     record={rw.record}
                     title={label}
+                    cardless={rw.cardless}
                   />
                 )}
               </div>
@@ -1554,7 +2106,7 @@ export function App() {
           })}
         </main>
 
-        <FooterBar footer={settings.footer} />
+        <FooterBar footer={settings.footer} version={appVersion} />
 
         {isAuthenticated && auth.user && (
           <>
@@ -1566,16 +2118,21 @@ export function App() {
             <AccountPopover
               open={accountOpen}
               user={auth.user}
+              version={appVersion}
               onClose={() => setAccountOpen(false)}
               onOpenSettings={(tab) => openSettings(tab)}
               onStartLayoutEdit={startLayoutEdit}
               onLogout={async () => {
-                await api.logout();
-                setZonePanelOpen(false);
-                setAccountOpen(false);
-                setSettingsModalOpen(false);
-                setActiveDrawer(null);
-                await loadWorkspace();
+                try {
+                  await api.logout();
+                  setZonePanelOpen(false);
+                  setAccountOpen(false);
+                  setSettingsModalOpen(false);
+                  setActiveDrawer(null);
+                  await loadWorkspace();
+                } catch (e) {
+                  showToast((e as Error).message || '退出登录失败', true);
+                }
               }}
             />
 
@@ -1616,15 +2173,6 @@ export function App() {
               />
             )}
 
-            {canViewMonitor && isPluginEnabled('orbit.monitor') && (
-              <MonitorModal
-                open={monitorModalOpen}
-                metrics={metrics}
-                onClose={() => setMonitorModalOpen(false)}
-                onOpenCustomize={() => openSettings('monitor')}
-              />
-            )}
-
             {transferEnabled && (
               <DragUploadOverlay
                 visible={externalDragVisible}
@@ -1635,11 +2183,14 @@ export function App() {
           </>
         )}
 
-        {isGuest && authModalOpen && (
+        {isGuest && (
           <AuthScreen
             modal
+            open={authModalOpen}
             initialized={auth.initialized}
             notice={authNotice}
+            theme={resolvedTheme}
+            onToggleTheme={toggleDayNight}
             onClose={() => setAuthModalOpen(false)}
             onAuthenticated={loadWorkspace}
             onToast={showToast}
@@ -1648,10 +2199,13 @@ export function App() {
 
         <NotificationStack
           items={notifications}
+          offsetTop={layoutEditing && !isGuest}
           onDismiss={dismissNotification}
           onCopy={copyText}
           onOpenDrawer={(drawerId) => host.openDrawer(drawerId)}
         />
+
+        {splashState === 'leaving' && renderBootSplash('leaving')}
       </div>
     </OrbitHostProvider>
   );

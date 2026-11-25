@@ -7,8 +7,9 @@ import { BookmarksSettingsPanel } from './BookmarksSettingsPanel';
 
 export { BookmarkModal } from './BookmarkModal';
 
-function BookmarksPluginWidget() {
+function BookmarksPluginWidget({ layoutKey, manifest }: { layoutKey: string; manifest: OrbitPlugin['manifest'] }) {
   const host = useOrbitHost();
+  const cardless = host.isWidgetCardless(layoutKey, Boolean(manifest.style?.defaultCardless));
   return (
     <BookmarkDock
       groups={host.bookmarkGroups}
@@ -17,8 +18,9 @@ function BookmarksPluginWidget() {
       onSelectGroup={host.setActiveGroupId}
       dockStyle={host.settings.dockStyle}
       onChangeDockStyle={(dockStyle) => host.updateSettings({ dockStyle })}
+      cardless={cardless}
       zone={host.zone}
-      enableTilt={host.settings.enableTilt}
+      enableTilt={host.settings.enableTilt && host.settings.enableAnimations !== false}
       layoutEditing={host.layoutEditing}
       onOpenBookmark={host.openBookmark}
       onAddBookmark={() => host.openBookmarkModal(null)}
@@ -33,12 +35,17 @@ export const bookmarksPlugin: OrbitPlugin = {
   id: 'orbit.bookmarks',
   manifest: {
     id: 'orbit.bookmarks',
-    name: '三网智能书签',
+    name: '极简导航',
     version: '1.0.0',
-    description: '支持 LAN / Tailscale / 外网自动路由与浏览器书签一键导入',
+    description: '三网自适应路由书签',
     icon: 'bookmark',
-    tier: 'builtin',
+    tier: 'core',
+    source: 'official',
     defaultEnabled: true,
+    style: {
+      managed: true,
+      supportsCardless: true,
+    },
     access: {
       minRole: 'user',
       guest: { mode: 'hidden' },

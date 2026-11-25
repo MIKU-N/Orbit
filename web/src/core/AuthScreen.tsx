@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Copy, Download, Info, X } from 'lucide-react';
+import { Copy, Download, Info, Moon, Sun, X } from 'lucide-react';
 import { api } from '../api/client';
-import type { PublicShareMeta } from '../types';
-import { formatBytes } from '../sdk/primitives';
+import { copyToClipboard } from '../lib/clipboard';
 import { PRESET_WALLPAPERS } from '../lib/wallpapers';
+import { CenteredModal, formatBytes } from '../sdk/primitives';
+import type { PublicShareMeta } from '../types';
 
 interface AuthScreenProps {
   initialized: boolean;
   initialShareCode?: string;
   modal?: boolean;
+  open?: boolean;
   notice?: string | null;
+  theme?: 'dark' | 'light';
+  onToggleTheme?: (ev?: React.MouseEvent<HTMLElement>) => void;
   onClose?: () => void;
   onAuthenticated: () => Promise<void>;
   onToast: (msg: string, warn?: boolean) => void;
@@ -19,7 +23,10 @@ export function AuthScreen({
   initialized,
   initialShareCode,
   modal = false,
+  open = true,
   notice,
+  theme = 'dark',
+  onToggleTheme,
   onClose,
   onAuthenticated,
   onToast,
@@ -34,7 +41,10 @@ export function AuthScreen({
 
   const lookupShare = async (rawCode: string) => {
     const c = rawCode.trim().toUpperCase();
-    if (!c) return;
+    if (!c) {
+      onToast('请输入取件码', true);
+      return;
+    }
     setShareLoading(true);
     try {
       const meta = await api.getPublicShare(c);
@@ -51,6 +61,7 @@ export function AuthScreen({
     if (initialShareCode) {
       void lookupShare(initialShareCode);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialShareCode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -77,20 +88,47 @@ export function AuthScreen({
     }
   };
 
-  const cardContent = (
-    <div
-      onClick={(e) => e.stopPropagation()}
-      className="relative z-10 w-full max-w-sm glass-strong rounded-3xl p-6 space-y-5 pop-in"
-    >
-      {modal && onClose && (
+  const handleCopyShareContent = async () => {
+    const content = shareMeta?.content || '';
+    if (!content) {
+      onToast('没有可复制的内容', true);
+      return;
+    }
+    const ok = await copyToClipboard(content);
+    if (ok) onToast('已复制内容');
+    else onToast('复制失败，请手动选中复制', true);
+  };
+
+  const cardInner = (
+    <>
+      {modal && onClose ? (
         <button
           type="button"
           onClick={onClose}
           className="absolute top-4 right-4 p-1.5 rounded-lg opacity-70 hover:opacity-100 cursor-pointer"
-          title="继续游客浏览"
+          title="关闭"
         >
           <X className="w-4 h-4" />
         </button>
+      ) : (
+        onToggleTheme && (
+          <button
+            type="button"
+            onClick={(e) => onToggleTheme(e)}
+            className="theme-toggle-btn absolute top-4 right-4 p-1.5 rounded-lg opacity-80 hover:opacity-100 orbit-hover cursor-pointer transition-transform active:scale-95"
+            title={theme === 'dark' ? '切换白天模式' : '切换夜间模式'}
+            aria-label={theme === 'dark' ? '切换白天模式' : '切换夜间模式'}
+          >
+            <span className="theme-icon-wrap" data-theme={theme} aria-hidden="true">
+              <span className="theme-icon-sun">
+                <Sun className="w-4 h-4 text-amber-300" />
+              </span>
+              <span className="theme-icon-moon">
+                <Moon className="w-4 h-4 text-indigo-600" />
+              </span>
+            </span>
+          </button>
+        )
       )}
 
       <div className="text-center space-y-1.5">
@@ -101,7 +139,7 @@ export function AuthScreen({
         />
         <h1 className="text-base font-semibold tracking-tight">Orbit · 星轨</h1>
         <p className="text-xs" style={{ color: 'var(--ink-muted)' }}>
-          {!initialized ? '首次启动 · 创建管理员账号' : '登录个人工作台'}
+          {!initialized ? '创建管理员账号' : '登录工作台'}
         </p>
       </div>
 
@@ -142,20 +180,20 @@ export function AuthScreen({
                   style={{ background: 'var(--brand-solid)' }}
                 >
                   <Download className="w-4 h-4" />
-                  <span>立即下载</span>
+                  <span>下载</span>
                 </a>
               </div>
             ) : (
               <div className="space-y-2 pt-1">
-                <div className="p-2.5 rounded-xl bg-black/25 break-words whitespace-pre-wrap max-h-40 overflow-y-auto">
+                <div
+                  className="p-2.5 rounded-xl break-words whitespace-pre-wrap max-h-40 overflow-y-auto select-text"
+                  style={{ background: 'var(--code-bg)' }}
+                >
                   {shareMeta.content}
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(shareMeta.content || '');
-                    onToast('已复制内容');
-                  }}
+                  onClick={() => void handleCopyShareContent()}
                   className="w-full h-9 rounded-xl font-medium text-white flex items-center justify-center gap-1.5 cursor-pointer"
                   style={{ background: 'var(--brand-solid)' }}
                 >
@@ -189,7 +227,7 @@ export function AuthScreen({
               onChange={(e) => setUsername(e.target.value)}
               className="w-full h-10 px-3.5 rounded-xl focus:outline-none"
               style={{
-                background: 'var(--pill-bg)',
+                background: 'var(--input-bg)',
                 border: '1px solid var(--glass-border)',
                 color: 'var(--ink)',
               }}
@@ -201,7 +239,7 @@ export function AuthScreen({
               onChange={(e) => setPassword(e.target.value)}
               className="w-full h-10 px-3.5 rounded-xl focus:outline-none"
               style={{
-                background: 'var(--pill-bg)',
+                background: 'var(--input-bg)',
                 border: '1px solid var(--glass-border)',
                 color: 'var(--ink)',
               }}
@@ -219,7 +257,7 @@ export function AuthScreen({
           {initialized && (
             <div className="pt-3 border-t space-y-2 text-xs" style={{ borderColor: 'var(--glass-border)' }}>
               <div className="text-center" style={{ color: 'var(--ink-muted)' }}>
-                访客免登录取件
+                取件码提取
               </div>
               <div className="flex gap-2">
                 <input
@@ -227,10 +265,16 @@ export function AuthScreen({
                   maxLength={8}
                   value={pickupCode}
                   onChange={(e) => setPickupCode(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void lookupShare(pickupCode);
+                    }
+                  }}
                   placeholder="6 位取件码"
                   className="flex-1 h-9 px-3 rounded-xl font-mono focus:outline-none"
                   style={{
-                    background: 'var(--pill-bg)',
+                    background: 'var(--input-bg)',
                     border: '1px solid var(--glass-border)',
                     color: 'var(--ink)',
                   }}
@@ -249,32 +293,35 @@ export function AuthScreen({
           )}
         </>
       )}
-    </div>
+    </>
   );
 
   if (modal) {
     return (
-      <div
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
-        onClick={onClose}
+      <CenteredModal
+        open={open}
+        onClose={onClose}
+        zIndexClass="z-50"
+        panelClassName="w-full max-w-sm p-6 space-y-5"
       >
-        <div className="absolute inset-0 bg-black/55 backdrop-blur-xs" />
-        {cardContent}
-      </div>
+        {cardInner}
+      </CenteredModal>
     );
   }
 
   return (
     <div
       className="orbit-shell relative min-h-screen w-full flex items-center justify-center p-4"
-      data-glass="dark"
+      data-glass={theme}
     >
       <div
         className="wallpaper-layer"
         style={{ backgroundImage: PRESET_WALLPAPERS[0].bg }}
       />
       <div className="wallpaper-dim" />
-      {cardContent}
+      <div className="relative z-10 w-full max-w-sm glass-strong rounded-3xl p-6 space-y-5 pop-in">
+        {cardInner}
+      </div>
     </div>
   );
 }

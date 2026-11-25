@@ -60,11 +60,17 @@ func (p *Plugin) Manifest() plugin.Manifest {
 		Version:        "1.0.0",
 		Description:    "支持在线一言 API 与内置精选文案库，支持自动轮播与点击刷新",
 		Icon:           "quote",
-		Tier:           "builtin",
+		Tier:           "light",
+		Source:         "official",
 		DefaultEnabled: true,
 		Access: plugin.AccessSpec{
-			MinRole: "public",
-			Guest:   plugin.GuestSpec{Mode: "readonly"},
+			MinRole:     "public",
+			Guest:       plugin.GuestSpec{Mode: "readonly"},
+			AllowPublic: true,
+		},
+		Style: &plugin.StyleSpec{
+			Managed:          true,
+			SupportsCardless: true,
 		},
 		Contributes: plugin.ContributesSpec{
 			Widgets: []plugin.WidgetContrib{

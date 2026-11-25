@@ -1,6 +1,7 @@
 import type {
   HostAPI,
   OrbitPlugin,
+  PluginManifest,
   PluginStateRecord,
   ResolvedDrawer,
   ResolvedSettingsTab,
@@ -10,13 +11,30 @@ import type {
   UserSettings,
 } from './types';
 
+function normalizeManifest(m: PluginManifest): PluginManifest {
+  const tier = m.tier === 'builtin' ? 'core' : m.tier === 'external' ? 'light' : m.tier;
+  const source =
+    m.source ||
+    (m.tier === 'external' || (tier === 'light' && Boolean(m.external)) ? 'external' : 'official');
+  return {
+    ...m,
+    tier,
+    source,
+    style: {
+      managed: true,
+      supportsCardless: true,
+      ...(m.style || {}),
+    },
+  };
+}
+
 export function mergePluginRecords(
   codePlugins: OrbitPlugin[],
   backendRecords: PluginStateRecord[],
 ): PluginStateRecord[] {
   const byId = new Map<string, PluginStateRecord>();
   for (const r of backendRecords) {
-    byId.set(r.manifest.id, r);
+    byId.set(r.manifest.id, { ...r, manifest: normalizeManifest(r.manifest) });
   }
 
   const result: PluginStateRecord[] = [];
@@ -29,7 +47,7 @@ export function mergePluginRecords(
       result.push(server);
     } else {
       result.push({
-        manifest: cp.manifest,
+        manifest: normalizeManifest(cp.manifest),
         enabled: cp.manifest.defaultEnabled,
         config: {},
       });
@@ -38,7 +56,7 @@ export function mergePluginRecords(
 
   for (const r of backendRecords) {
     if (!seen.has(r.manifest.id)) {
-      result.push(r);
+      result.push({ ...r, manifest: normalizeManifest(r.manifest) });
     }
   }
 
@@ -49,11 +67,21 @@ export function getWidgetLayoutKey(pluginId: string, widgetId: string, layoutKey
   return layoutKey && layoutKey.trim() ? layoutKey.trim() : `${pluginId}:${widgetId}`;
 }
 
+export function canSeePlugin(manifest: PluginManifest, isGuest: boolean, isAdmin: boolean): boolean {
+  if (isAdmin) return true;
+  if (manifest.access.minRole === 'admin') return false;
+  if (isGuest) {
+    return manifest.access.guest.mode !== 'hidden';
+  }
+  return true;
+}
+
 export function resolveWidgets(
   codePlugins: OrbitPlugin[],
   records: PluginStateRecord[],
   isGuest: boolean,
   settings: UserSettings,
+  isAdmin = false,
 ): ResolvedWidget[] {
   const codeMap = new Map(codePlugins.map((p) => [p.id, p]));
   const out: ResolvedWidget[] = [];
@@ -64,15 +92,21 @@ export function resolveWidgets(
     const widgets = m.contributes.widgets || [];
     if (widgets.length === 0) continue;
 
+    if (!isAdmin && m.access.minRole === 'admin') continue;
     if (isGuest && (m.access.guest.mode === 'hidden' || m.access.guest.mode === 'login-prompt')) {
       continue;
     }
 
     const code = codeMap.get(m.id);
+    const defaultCardless = Boolean(m.style?.defaultCardless);
+
     for (const w of widgets) {
       const key = getWidgetLayoutKey(m.id, w.id, w.layoutKey);
       const visible =
         settings.visibleItems[key] !== undefined ? Boolean(settings.visibleItems[key]) : w.defaultVisible;
+      const userCardless = settings.cardlessItems?.[key];
+      const cardless = userCardless !== undefined ? Boolean(userCardless) : defaultCardless;
+
       out.push({
         key,
         pluginId: m.id,
@@ -80,6 +114,7 @@ export function resolveWidgets(
         manifest: m,
         record: rec,
         visible,
+        cardless,
         guestReadonly: isGuest && m.access.guest.mode === 'readonly',
         Component: code?.widgets?.[w.id],
       });
@@ -93,6 +128,7 @@ export function resolveDrawers(
   codePlugins: OrbitPlugin[],
   records: PluginStateRecord[],
   isGuest: boolean,
+  isAdmin = false,
 ): ResolvedDrawer[] {
   const codeMap = new Map(codePlugins.map((p) => [p.id, p]));
   const out: ResolvedDrawer[] = [];
@@ -102,6 +138,7 @@ export function resolveDrawers(
     const m = rec.manifest;
     const drawers = m.contributes.drawers || [];
     if (drawers.length === 0) continue;
+    if (!isAdmin && m.access.minRole === 'admin') continue;
     if (isGuest && m.access.guest.mode === 'hidden') continue;
 
     const code = codeMap.get(m.id);
@@ -126,6 +163,7 @@ export function resolveSettingsTabs(
   codePlugins: OrbitPlugin[],
   records: PluginStateRecord[],
   isGuest: boolean,
+  isAdmin = false,
 ): ResolvedSettingsTab[] {
   if (isGuest) return [];
   const codeMap = new Map(codePlugins.map((p) => [p.id, p]));
@@ -133,6 +171,7 @@ export function resolveSettingsTabs(
 
   for (const rec of records) {
     if (!rec.enabled) continue;
+    if (!isAdmin && rec.manifest.access.minRole === 'admin') continue;
     const s = rec.manifest.contributes.settings;
     if (!s) continue;
     const code = codeMap.get(rec.manifest.id);
@@ -156,7 +195,7 @@ export function resolveSharingScopes(records: PluginStateRecord[]): SharingScope
     {
       pluginId: 'core',
       scopeKey: 'appearance',
-      label: '共享全局外观、壁纸、字体、布局与页脚',
+      label: '外观',
       mode: 'sync',
     },
   ];
@@ -182,6 +221,7 @@ export function collectSearchSuggestions(
   records: PluginStateRecord[],
   isGuest: boolean,
   host: HostAPI,
+  isAdmin = false,
 ): SearchSuggestion[] {
   const q = query.trim();
   if (!q) return [];
@@ -192,6 +232,7 @@ export function collectSearchSuggestions(
       if (!cp.searchProvider) return false;
       const rec = recMap.get(cp.id);
       if (!rec?.enabled) return false;
+      if (!isAdmin && rec.manifest.access.minRole === 'admin') return false;
       if (!rec.manifest.contributes.searchProvider?.enabled) return false;
       if (isGuest && (rec.manifest.access.guest.mode === 'hidden' || rec.manifest.access.guest.mode === 'login-prompt')) {
         return false;

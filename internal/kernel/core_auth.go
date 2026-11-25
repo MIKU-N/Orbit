@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"orbit/internal/auth"
+	"orbit/internal/config"
 	"orbit/internal/db"
 	"orbit/internal/plugin"
 )
@@ -67,6 +68,7 @@ func (k *Kernel) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{
+		"version":       config.Version,
 		"initialized":   n > 0,
 		"authenticated": user != nil,
 		"user":          user,
@@ -371,10 +373,10 @@ func (k *Kernel) syncAppearanceSettings(srcUserID, dstUserID int64) {
 		dstMap = make(map[string]any)
 	}
 	for _, key := range []string{
-		"glassTheme", "glassBlur", "glassBlurMode", "glassAlpha", "glassRadius", "bgDim",
-		"fontConfig", "wallpaperMode", "wallpaperPreset", "wallpaperCustom",
+		"glassTheme", "themeMode", "glassBlur", "glassBlurMode", "glassAlpha", "glassRadius", "bgDim",
+		"fontConfig", "resourceCdn", "wallpaperMode", "wallpaperPreset", "wallpaperCustom",
 		"localWallpapers", "localWallpaperRotate", "localWallpaperIntervalMin",
-		"bingAuto", "enableTilt", "footer",
+		"bingAuto", "enableTilt", "enableAnimations", "footer", "cardlessItems",
 	} {
 		if v, ok := srcMap[key]; ok {
 			dstMap[key] = v
@@ -559,6 +561,7 @@ func (k *Kernel) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := map[string]any{
+		"version":    config.Version,
 		"allowGuest": allowGuest,
 	}
 	if !allowGuest {
@@ -568,12 +571,14 @@ func (k *Kernel) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 
 	safeKeys := []string{
 		"glassTheme",
+		"themeMode",
 		"glassBlur",
 		"glassBlurMode",
 		"glassAlpha",
 		"glassRadius",
 		"bgDim",
 		"fontConfig",
+		"resourceCdn",
 		"wallpaperMode",
 		"wallpaperPreset",
 		"wallpaperCustom",
@@ -582,6 +587,7 @@ func (k *Kernel) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 		"localWallpaperIntervalMin",
 		"bingAuto",
 		"enableTilt",
+		"enableAnimations",
 		"showSeconds",
 		"searchIconOnly",
 		"activeEngineId",
@@ -590,9 +596,23 @@ func (k *Kernel) handlePublicConfig(w http.ResponseWriter, r *http.Request) {
 		"weatherLabel",
 		"hitokotoConfig",
 		"footer",
+		"cardlessItems",
 	}
 	for _, key := range safeKeys {
 		if val, ok := src[key]; ok {
+			if key == "weatherConfig" {
+				if wc, ok := val.(map[string]any); ok {
+					clean := make(map[string]any, len(wc))
+					for wk, wv := range wc {
+						if wk == "caiyunToken" {
+							continue
+						}
+						clean[wk] = wv
+					}
+					out[key] = clean
+					continue
+				}
+			}
 			out[key] = val
 		}
 	}

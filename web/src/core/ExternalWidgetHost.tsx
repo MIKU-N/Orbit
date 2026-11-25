@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 import { useOrbitHost } from '../sdk/host';
-import { MotionCard, getPluginIcon } from '../sdk/primitives';
+import { WidgetSurface, getPluginIcon } from '../sdk/primitives';
 import type { PluginManifest, PluginStateRecord } from '../sdk/types';
 
 function readShellCssVars(): Record<string, string> {
@@ -11,14 +11,23 @@ function readShellCssVars(): Record<string, string> {
   const rootCs = getComputedStyle(document.documentElement);
   const keys = [
     '--glass-rgb',
+    '--glass-strong-rgb',
     '--glass-alpha',
     '--glass-blur',
     '--glass-border',
+    '--glass-border-hover',
     '--ink',
     '--ink-muted',
     '--ink-subtle',
+    '--hero-ink',
+    '--hero-ink-muted',
+    '--hero-shadow',
     '--pill-bg',
     '--pill-hover',
+    '--hover-bg',
+    '--input-bg',
+    '--code-bg',
+    '--track-bg',
     '--brand',
     '--brand-solid',
     '--ok',
@@ -42,6 +51,7 @@ interface ExternalWidgetHostProps {
   record: PluginStateRecord;
   title?: string;
   compact?: boolean;
+  cardless?: boolean;
 }
 
 export function ExternalWidgetHost({
@@ -49,40 +59,62 @@ export function ExternalWidgetHost({
   record,
   title,
   compact = false,
+  cardless = false,
 }: ExternalWidgetHostProps) {
   const host = useOrbitHost();
   const [reloadKey, setReloadKey] = useState(0);
-  const [frameHeight, setFrameHeight] = useState(compact ? 320 : 196);
+  const [frameHeight, setFrameHeight] = useState(compact ? 320 : 180);
   const [esmError, setEsmError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const esmMountRef = useRef<HTMLDivElement>(null);
+  const esmThemeListenersRef = useRef<Set<(payload: { theme: 'dark' | 'light'; cardless: boolean; vars: Record<string, string> }) => void>>(new Set());
 
   const ext = manifest.external;
   const entry = ext?.entry || 'widget.html';
   const renderMode = ext?.renderMode || (entry.endsWith('.mjs') || entry.endsWith('.js') ? 'esm' : 'iframe');
   const assetUrl = `/api/p/${encodeURIComponent(manifest.id)}/assets/${entry}?v=${encodeURIComponent(manifest.version)}_${reloadKey}`;
 
+  const styleManaged = manifest.style?.managed !== false;
+  const hideHeader = Boolean(manifest.style?.hideHeader) || cardless;
+  const theme = host.resolvedTheme;
+
   const pushTheme = useCallback(() => {
+    const vars = styleManaged ? readShellCssVars() : {};
     const win = iframeRef.current?.contentWindow;
-    if (!win) return;
-    win.postMessage(
-      {
-        type: 'orbit:theme',
-        theme: host.settings.glassTheme,
-        vars: readShellCssVars(),
-        zone: host.zone,
-        isGuest: host.isGuest,
-      },
-      window.location.origin,
-    );
-  }, [host.isGuest, host.settings.glassTheme, host.zone]);
+    if (win) {
+      win.postMessage(
+        {
+          type: 'orbit:theme',
+          theme,
+          mode: theme,
+          managed: styleManaged,
+          cardless,
+          vars,
+          animations: host.settings.enableAnimations !== false,
+          cdnBase: host.cdnBase,
+          zone: host.zone,
+          isGuest: host.isGuest,
+        },
+        window.location.origin,
+      );
+    }
+    // Also notify active ESM plugin listeners without remounting
+    if (esmThemeListenersRef.current.size > 0) {
+      const payload = { theme, cardless, vars };
+      esmThemeListenersRef.current.forEach((cb) => {
+        try {
+          cb(payload);
+        } catch {
+          // isolate external listener error
+        }
+      });
+    }
+  }, [cardless, host.cdnBase, host.isGuest, host.settings.enableAnimations, host.zone, styleManaged, theme]);
 
   useEffect(() => {
-    if (renderMode !== 'iframe') return;
     pushTheme();
   }, [
     pushTheme,
-    renderMode,
     host.settings.glassAlpha,
     host.settings.glassBlur,
     host.settings.glassRadius,
@@ -117,9 +149,13 @@ export function ExternalWidgetHost({
 
       try {
         switch (payload.type) {
+          case 'orbit:ready': {
+            pushTheme();
+            break;
+          }
           case 'orbit:resize': {
             if (typeof payload.height === 'number' && Number.isFinite(payload.height)) {
-              setFrameHeight(Math.max(90, Math.min(620, Math.round(payload.height))));
+              setFrameHeight(Math.max(60, Math.min(620, Math.round(payload.height))));
             }
             break;
           }
@@ -166,7 +202,7 @@ export function ExternalWidgetHost({
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [host, manifest.id, renderMode]);
+  }, [host, manifest.id, pushTheme, renderMode]);
 
   useEffect(() => {
     if (renderMode !== 'esm') return;
@@ -178,22 +214,29 @@ export function ExternalWidgetHost({
     let modRef: { unmount?: (el: HTMLElement) => void } | null = null;
     setEsmError(null);
     container.innerHTML = '';
+    esmThemeListenersRef.current.clear();
 
     void import(/* @vite-ignore */ assetUrl)
       .then((mod) => {
         if (cancelled) return;
         modRef = mod as {
-          mount?: (
-            el: HTMLElement,
-            ctx: Record<string, unknown>,
-          ) => void | (() => void);
+          mount?: (el: HTMLElement, ctx: Record<string, unknown>) => void | (() => void);
           unmount?: (el: HTMLElement) => void;
         };
         const ctx = {
-          theme: host.settings.glassTheme,
-          vars: readShellCssVars(),
+          theme,
+          managed: styleManaged,
+          cardless,
+          vars: styleManaged ? readShellCssVars() : {},
+          onThemeChange: (
+            cb: (p: { theme: 'dark' | 'light'; cardless: boolean; vars: Record<string, string> }) => void,
+          ) => {
+            esmThemeListenersRef.current.add(cb);
+            return () => esmThemeListenersRef.current.delete(cb);
+          },
           zone: host.zone,
           isGuest: host.isGuest,
+          cdnBase: host.cdnBase,
           config: record.config,
           toast: host.toast,
           proxy: (
@@ -214,50 +257,53 @@ export function ExternalWidgetHost({
       })
       .catch((err) => {
         if (!cancelled) {
-          setEsmError((err as Error).message || '加载 ESM 插件失败');
+          setEsmError((err as Error).message || '加载扩展组件失败');
         }
       });
 
     return () => {
       cancelled = true;
+      esmThemeListenersRef.current.clear();
       if (typeof cleanup === 'function') cleanup();
       else if (modRef?.unmount) modRef.unmount(container);
       container.innerHTML = '';
     };
-  }, [assetUrl, host.isGuest, host.settings.glassTheme, host.toast, host.zone, manifest.id, record.config, renderMode]);
+    // Theme updates are dispatched reactively via onThemeChange without remounting
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetUrl, host.isGuest, host.zone, manifest.id, record.config, renderMode]);
 
   const cardInner = (
-    <div className={compact ? 'space-y-2' : 'p-4 space-y-2.5'}>
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2 min-w-0">
-          <span style={{ color: 'var(--brand)' }}>
-            {getPluginIcon(manifest.icon || 'plug', 'w-4 h-4')}
-          </span>
-          <span className="font-semibold truncate">{title || manifest.name}</span>
-          <span
-            className="px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0"
-            style={{ background: 'var(--pill-bg)', color: 'var(--ink-muted)' }}
+    <div
+      data-theme={theme}
+      data-cardless={cardless ? 'true' : 'false'}
+      className={compact ? 'space-y-2' : cardless ? 'p-1 h-full flex flex-col' : 'p-4 space-y-2.5 h-full flex flex-col'}
+    >
+      {!hideHeader && (
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <span style={{ color: 'var(--brand)' }}>
+              {getPluginIcon(manifest.icon || 'plug', 'w-4 h-4')}
+            </span>
+            <span className="font-semibold truncate">{title || manifest.name}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="p-1 rounded-lg orbit-hover cursor-pointer shrink-0"
+            style={{ color: 'var(--ink-muted)' }}
+            title="刷新"
           >
-            EXT · v{manifest.version}
-          </span>
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setReloadKey((k) => k + 1)}
-          className="p-1 rounded-lg hover:bg-white/10 cursor-pointer shrink-0"
-          style={{ color: 'var(--ink-muted)' }}
-          title="重载扩展组件"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
-      </div>
+      )}
 
       {!ext ? (
         <div className="text-xs py-6 text-center" style={{ color: 'var(--ink-muted)' }}>
-          {manifest.description || '外部扩展插件'}
+          {manifest.description || manifest.name}
         </div>
       ) : renderMode === 'esm' ? (
-        <div className="min-h-[120px]">
+        <div className="min-h-[80px]">
           {esmError ? (
             <div className="text-xs p-3 rounded-xl" style={{ background: 'var(--pill-bg)', color: 'var(--danger)' }}>
               {esmError}
@@ -273,8 +319,8 @@ export function ExternalWidgetHost({
           title={title || manifest.name}
           onLoad={pushTheme}
           sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
-          className="w-full border-0 rounded-xl bg-transparent"
-          style={{ height: `${frameHeight}px`, colorScheme: host.settings.glassTheme }}
+          className="w-full border-0 rounded-xl bg-transparent block"
+          style={{ height: `${frameHeight}px`, colorScheme: theme }}
         />
       )}
     </div>
@@ -283,8 +329,13 @@ export function ExternalWidgetHost({
   if (compact) return cardInner;
 
   return (
-    <MotionCard enableTilt={host.settings.enableTilt} disabled={host.layoutEditing}>
+    <WidgetSurface
+      cardless={cardless}
+      managed={styleManaged}
+      enableTilt={host.settings.enableTilt && host.settings.enableAnimations !== false}
+      layoutEditing={host.layoutEditing}
+    >
       {cardInner}
-    </MotionCard>
+    </WidgetSurface>
   );
 }

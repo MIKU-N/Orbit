@@ -24,13 +24,13 @@ export function UserAvatar({
   if (avatarUrl && !failed) {
     return (
       <span
-        className={`${sizeClass} rounded-full overflow-hidden flex items-center justify-center shrink-0 bg-black/20 ${className}`}
+        className={`${sizeClass} rounded-full overflow-hidden block shrink-0 bg-black/20 ${className}`}
       >
         <img
           src={avatarUrl}
           alt={user?.username || 'avatar'}
           onError={() => setFailed(true)}
-          className="w-full h-full object-cover"
+          className="block w-full h-full object-cover"
         />
       </span>
     );

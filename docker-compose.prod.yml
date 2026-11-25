@@ -22,7 +22,8 @@ services:
       # host 模式下直接通过 ORBIT_ADDR 修改监听端口（无需配置 ports:）
       - ORBIT_ADDR=${ORBIT_ADDR:-:8080}
       - ORBIT_DATA_DIR=/app/data
-      - ORBIT_LAN_MAX_MB=${ORBIT_LAN_MAX_MB:-10240}
+      # 单文件与总容量上限（单位 MB，设为 0 表示不限制）
+      - ORBIT_LAN_MAX_MB=${ORBIT_LAN_MAX_MB:-0}
       - ORBIT_TS_MAX_MB=${ORBIT_TS_MAX_MB:-2048}
       - ORBIT_WAN_MAX_MB=${ORBIT_WAN_MAX_MB:-100}
       - ORBIT_MAX_STORAGE_MB=${ORBIT_MAX_STORAGE_MB:-20480}

@@ -29,8 +29,13 @@ func (p *Plugin) Manifest() plugin.Manifest {
 		Version:        "1.0.0",
 		Description:    "三网自适应路由书签分组、拖拽排序、浏览器 HTML 与 Sun-Panel 导入",
 		Icon:           "bookmark",
-		Tier:           "builtin",
+		Tier:           "core",
+		Source:         "official",
 		DefaultEnabled: true,
+		Style: &plugin.StyleSpec{
+			Managed:          true,
+			SupportsCardless: true,
+		},
 		Access: plugin.AccessSpec{
 			MinRole: "user",
 			Guest:   plugin.GuestSpec{Mode: "hidden"},

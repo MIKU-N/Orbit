@@ -26,6 +26,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import type { Bookmark, NetworkZone } from '../../types';
+import { BrandIconSvg, isBrandIconValue, resolveDefaultBrandIcon } from './BrandIcons';
 
 export const BUILTIN_ICON_NAMES = [
   'globe',
@@ -125,6 +126,8 @@ interface AppIconProps {
   boxClass?: string;
   iconClass?: string;
   roundedClass?: string;
+  engineId?: string;
+  targetUrl?: string;
 }
 
 export function AppIcon({
@@ -134,6 +137,8 @@ export function AppIcon({
   boxClass = 'w-9 h-9',
   iconClass = 'w-4 h-4',
   roundedClass = 'rounded-xl',
+  engineId,
+  targetUrl,
 }: AppIconProps) {
   const [imgErr, setImgErr] = useState(false);
   const val = (icon || '').trim();
@@ -142,17 +147,37 @@ export function AppIcon({
     setImgErr(false);
   }, [val]);
 
+  const effectiveBrand = isBrandIconValue(val)
+    ? val
+    : !val && (engineId || targetUrl)
+      ? resolveDefaultBrandIcon(engineId, targetUrl)
+      : null;
+
+  if (effectiveBrand) {
+    const isMonochrome = effectiveBrand === 'brand:github' || effectiveBrand === 'brand:local';
+    return (
+      <div
+        className={`card-icon ${boxClass} ${roundedClass} flex items-center justify-center shrink-0`}
+        style={{
+          color: effectiveBrand === 'brand:local' ? 'var(--brand)' : isMonochrome ? 'var(--ink)' : undefined,
+        }}
+      >
+        <BrandIconSvg brand={effectiveBrand} className="w-[88%] h-[88%]" />
+      </div>
+    );
+  }
+
   if (isImageIconValue(val) && !imgErr) {
     return (
       <div
         className={`card-icon ${boxClass} ${roundedClass} flex items-center justify-center shrink-0 overflow-hidden shadow-sm`}
-        style={{ background: 'rgba(255,255,255,0.14)' }}
+        style={{ background: 'var(--pill-bg)' }}
       >
         <img
           src={val}
           alt={title}
           onError={() => setImgErr(true)}
-          className="w-[72%] h-[72%] object-contain"
+          className="w-[74%] h-[74%] object-contain"
           loading="lazy"
         />
       </div>

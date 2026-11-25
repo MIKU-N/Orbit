@@ -80,7 +80,7 @@ export function RangeField({
               setEditing(true);
             }}
             title="点击直接输入精确数值"
-            className="font-mono px-1.5 py-0.5 rounded-md hover:bg-white/10 cursor-text transition-colors"
+            className="font-mono px-1.5 py-0.5 rounded-md orbit-hover cursor-text transition-colors"
             style={{ color: 'var(--ink)' }}
           >
             {value}

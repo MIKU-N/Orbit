@@ -840,3 +840,230 @@ func (k *Kernel) handleServeAvatar(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeFile(w, r, fullPath)
 }
+
+// ---------- Unified Uploaded Asset Manager ----------
+
+type ManagedAsset struct {
+	Category  string    `json:"category"` // wallpapers | icons | fonts | clips
+	Name      string    `json:"name"`
+	URL       string    `json:"url"`
+	SizeBytes int64     `json:"size_bytes"`
+	ModTime   time.Time `json:"mod_time"`
+	MimeHint  string    `json:"mime_hint"`
+	Owned     bool      `json:"owned"`
+}
+
+func mimeHintFromExt(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".svg":
+		return "image/svg+xml"
+	case ".ico":
+		return "image/x-icon"
+	case ".woff2":
+		return "font/woff2"
+	case ".woff":
+		return "font/woff"
+	case ".ttf":
+		return "font/ttf"
+	case ".otf":
+		return "font/otf"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func (k *Kernel) handleListAssets(w http.ResponseWriter, r *http.Request) {
+	u := k.CurrentUser(r)
+	category := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("category")))
+	if category == "" {
+		category = "all"
+	}
+
+	userPrefix := fmt.Sprintf("u%d_", u.ID)
+	assets := make([]ManagedAsset, 0)
+	totals := map[string]int64{
+		"wallpapers": 0,
+		"icons":      0,
+		"fonts":      0,
+		"clips":      0,
+	}
+
+	scanDir := func(cat, dirName, urlPrefix string, requireOwnerPrefix bool) {
+		dir := filepath.Join(k.cfg.DataDir, dirName)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, ent := range entries {
+			if ent.IsDir() {
+				continue
+			}
+			name := ent.Name()
+			if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".tmp") {
+				continue
+			}
+			owned := u.Role == "admin" || strings.HasPrefix(name, userPrefix)
+			if requireOwnerPrefix && !owned {
+				continue
+			}
+			info, err := ent.Info()
+			if err != nil {
+				continue
+			}
+			totals[cat] += info.Size()
+			if category != "all" && category != cat {
+				continue
+			}
+			assets = append(assets, ManagedAsset{
+				Category:  cat,
+				Name:      name,
+				URL:       urlPrefix + name,
+				SizeBytes: info.Size(),
+				ModTime:   info.ModTime().UTC(),
+				MimeHint:  mimeHintFromExt(name),
+				Owned:     owned,
+			})
+		}
+	}
+
+	scanDir("wallpapers", "wallpapers", "/api/wallpaper/custom/", true)
+	scanDir("icons", "icons", "/api/icons/custom/", u.Role != "admin")
+	scanDir("fonts", "fonts", "/api/fonts/custom/", true)
+
+	// Clip images: strictly scoped to the user's own clips table records (or all for admin)
+	var clipRowsQuery string
+	var clipArgs []any
+	if u.Role == "admin" {
+		clipRowsQuery = `SELECT image_path FROM clips WHERE kind = 'image' AND image_path != ''`
+	} else {
+		clipRowsQuery = `SELECT image_path FROM clips WHERE kind = 'image' AND image_path != '' AND user_id = ?`
+		clipArgs = append(clipArgs, u.ID)
+	}
+	clipSet := make(map[string]bool)
+	if rows, err := k.db.Query(clipRowsQuery, clipArgs...); err == nil {
+		for rows.Next() {
+			var p string
+			if rows.Scan(&p) == nil && p != "" {
+				clipSet[filepath.Base(p)] = true
+			}
+		}
+		rows.Close()
+	}
+	if entries, err := os.ReadDir(filepath.Join(k.cfg.DataDir, "clips")); err == nil {
+		for _, ent := range entries {
+			if ent.IsDir() {
+				continue
+			}
+			name := ent.Name()
+			if !clipSet[name] && u.Role != "admin" {
+				continue
+			}
+			info, err := ent.Info()
+			if err != nil {
+				continue
+			}
+			totals["clips"] += info.Size()
+			if category != "all" && category != "clips" {
+				continue
+			}
+			assets = append(assets, ManagedAsset{
+				Category:  "clips",
+				Name:      name,
+				URL:       "/api/clips/image/" + name,
+				SizeBytes: info.Size(),
+				ModTime:   info.ModTime().UTC(),
+				MimeHint:  mimeHintFromExt(name),
+				Owned:     true,
+			})
+		}
+	}
+
+	sort.Slice(assets, func(i, j int) bool {
+		return assets[i].ModTime.After(assets[j].ModTime)
+	})
+
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{
+		"assets": assets,
+		"totals": totals,
+	})
+}
+
+func (k *Kernel) deleteSingleAsset(uRole string, uID int64, category, name string) (int, string) {
+	base := filepath.Base(strings.TrimSpace(name))
+	if base == "" || base == "." || strings.Contains(base, "..") {
+		return http.StatusBadRequest, "无效的文件名"
+	}
+	userPrefix := fmt.Sprintf("u%d_", uID)
+
+	switch category {
+	case "wallpapers", "icons", "fonts":
+		if uRole != "admin" && !strings.HasPrefix(base, userPrefix) {
+			return http.StatusForbidden, "无权删除此文件"
+		}
+		target := filepath.Join(k.cfg.DataDir, category, base)
+		if _, err := os.Stat(target); err != nil {
+			return http.StatusNotFound, "文件不存在"
+		}
+		if err := os.Remove(target); err != nil {
+			return http.StatusInternalServerError, "删除文件失败"
+		}
+		return http.StatusOK, ""
+	case "clips":
+		imgURL := "/api/clips/image/" + base
+		if uRole != "admin" {
+			var cid int64
+			if err := k.db.QueryRow(`SELECT id FROM clips WHERE user_id = ? AND image_path = ?`, uID, imgURL).Scan(&cid); err != nil {
+				return http.StatusForbidden, "无权删除此剪贴板图片"
+			}
+			_, _ = k.db.Exec(`DELETE FROM clips WHERE user_id = ? AND image_path = ?`, uID, imgURL)
+		} else {
+			_, _ = k.db.Exec(`DELETE FROM clips WHERE image_path = ?`, imgURL)
+		}
+		_ = os.Remove(filepath.Join(k.cfg.DataDir, "clips", base))
+		k.hub.BroadcastUser(uID, "clip_updated", map[string]any{"action": "deleted"})
+		return http.StatusOK, ""
+	default:
+		return http.StatusBadRequest, "不支持的文件分类"
+	}
+}
+
+func (k *Kernel) handleDeleteAsset(w http.ResponseWriter, r *http.Request) {
+	u := k.CurrentUser(r)
+	category := strings.ToLower(strings.TrimSpace(r.PathValue("category")))
+	name := r.PathValue("name")
+	status, errMsg := k.deleteSingleAsset(u.Role, u.ID, category, name)
+	if status != http.StatusOK {
+		plugin.WriteErr(w, status, errMsg)
+		return
+	}
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (k *Kernel) handleBatchDeleteAssets(w http.ResponseWriter, r *http.Request) {
+	u := k.CurrentUser(r)
+	var req struct {
+		Items []struct {
+			Category string `json:"category"`
+			Name     string `json:"name"`
+		} `json:"items"`
+	}
+	if err := plugin.DecodeJSON(r, &req); err != nil || len(req.Items) == 0 {
+		plugin.WriteErr(w, http.StatusBadRequest, "请选择要删除的文件")
+		return
+	}
+	deleted := 0
+	for _, it := range req.Items {
+		if status, _ := k.deleteSingleAsset(u.Role, u.ID, strings.ToLower(it.Category), it.Name); status == http.StatusOK {
+			deleted++
+		}
+	}
+	plugin.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
+}

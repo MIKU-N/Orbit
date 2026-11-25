@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 import type { Bookmark, BookmarkGroup } from '../../types';
-import { IconPicker } from '../../sdk/primitives';
+import { CenteredModal, IconPicker, OrbitSelect } from '../../sdk/primitives';
 
 interface BookmarkModalProps {
   open: boolean;
@@ -43,7 +43,11 @@ export function BookmarkModal({
   const [browserGroupName, setBrowserGroupName] = useState('浏览器书签');
   const [saving, setSaving] = useState(false);
 
-  const ownGroups = groups.filter((g) => !g.shared);
+  const ownGroups = useMemo(() => groups.filter((g) => !g.shared), [groups]);
+  const groupOptions = useMemo(
+    () => ownGroups.map((g) => ({ value: String(g.id), label: g.name })),
+    [ownGroups],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -67,12 +71,13 @@ export function BookmarkModal({
       setIcon('globe');
       setColor('#6366f1');
     }
-  }, [open, editingBookmark, groups]);
-
-  if (!open) return null;
+  }, [open, editingBookmark, groups, ownGroups]);
 
   const handleSave = async () => {
-    if (!title.trim()) return;
+    if (!title.trim()) {
+      onToast?.('请填写书签名称', true);
+      return;
+    }
     setSaving(true);
     try {
       await onSave(
@@ -89,6 +94,8 @@ export function BookmarkModal({
         editingBookmark?.id,
       );
       onClose();
+    } catch (e) {
+      onToast?.((e as Error).message || '保存书签失败', true);
     } finally {
       setSaving(false);
     }
@@ -96,20 +103,35 @@ export function BookmarkModal({
 
   const handleAddGroup = async () => {
     const g = newGroupName.trim();
-    if (!g) return;
-    const created = await onCreateGroup(g);
-    if (created) {
-      setGroupId(created.id);
-      setNewGroupName('');
+    if (!g) {
+      onToast?.('请输入分组名称', true);
+      return;
+    }
+    try {
+      const created = await onCreateGroup(g);
+      if (created) {
+        setGroupId(created.id);
+        setNewGroupName('');
+      }
+    } catch (e) {
+      onToast?.((e as Error).message || '新建分组失败', true);
     }
   };
 
   const fetchTargetUrl = lanUrl.trim() || tsUrl.trim() || wanUrl.trim();
+  const inputStyle: React.CSSProperties = {
+    background: 'var(--input-bg)',
+    border: '1px solid var(--glass-border)',
+    color: 'var(--ink)',
+  };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
-      <div className="relative w-full max-w-md max-h-[90vh] overflow-y-auto glass-strong rounded-2xl p-5 space-y-3.5 pop-in text-xs">
+    <CenteredModal
+      open={open}
+      onClose={onClose}
+      zIndexClass="z-[60]"
+      panelClassName="w-full max-w-md max-h-[90vh] overflow-y-auto p-5 space-y-3.5 text-xs"
+    >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-sm font-semibold">
@@ -140,7 +162,11 @@ export function BookmarkModal({
               </div>
             )}
           </div>
-          <button type="button" onClick={onClose} className="cursor-pointer opacity-70 hover:opacity-100">
+          <button
+            type="button"
+            onClick={onClose}
+            className="cursor-pointer opacity-70 hover:opacity-100"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -148,44 +174,34 @@ export function BookmarkModal({
         {tab === 'browser' ? (
           <div className="space-y-3">
             <label className="block space-y-1">
-              <span style={{ color: 'var(--ink-muted)' }}>统一归类到分组（默认归为一类）</span>
+              <span style={{ color: 'var(--ink-muted)' }}>目标分组</span>
               <input
                 type="text"
                 value={browserGroupName}
                 onChange={(e) => setBrowserGroupName(e.target.value)}
                 placeholder="浏览器书签"
                 className="w-full h-9 px-3 rounded-xl focus:outline-none"
-                style={{
-                  background: 'var(--pill-bg)',
-                  border: '1px solid var(--glass-border)',
-                  color: 'var(--ink)',
-                }}
+                style={inputStyle}
               />
             </label>
             <textarea
               rows={5}
               value={browserHtml}
               onChange={(e) => setBrowserHtml(e.target.value)}
-              placeholder="选择 Chrome / Edge / Firefox 导出的书签 HTML 文件，或粘贴内容..."
+              placeholder="粘贴书签 HTML 或选择文件..."
               className="w-full p-3 rounded-xl font-mono focus:outline-none resize-none"
-              style={{
-                background: 'var(--pill-bg)',
-                border: '1px solid var(--glass-border)',
-                color: 'var(--ink)',
-              }}
+              style={inputStyle}
             />
             <div className="flex items-center justify-between gap-2">
               <label className="cursor-pointer hover:underline" style={{ color: 'var(--brand)' }}>
-                选择 bookmarks.html 文件
+                选择 .html 文件
                 <input
                   type="file"
                   accept=".html,.htm,text/html"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) {
-                      void f.text().then(setBrowserHtml);
-                    }
+                    if (f) void f.text().then(setBrowserHtml);
                     e.target.value = '';
                   }}
                 />
@@ -194,7 +210,10 @@ export function BookmarkModal({
                 type="button"
                 disabled={!browserHtml.trim()}
                 onClick={async () => {
-                  const ok = await onImportBrowserBookmarks(browserHtml, browserGroupName.trim() || '浏览器书签');
+                  const ok = await onImportBrowserBookmarks(
+                    browserHtml,
+                    browserGroupName.trim() || '浏览器书签',
+                  );
                   if (ok) {
                     setBrowserHtml('');
                     onClose();
@@ -203,7 +222,7 @@ export function BookmarkModal({
                 className="h-8 px-4 rounded-lg font-medium text-white cursor-pointer disabled:opacity-50"
                 style={{ background: 'var(--brand-solid)' }}
               >
-                导入为一类
+                导入
               </button>
             </div>
           </div>
@@ -215,11 +234,7 @@ export function BookmarkModal({
               onChange={(e) => setSunJson(e.target.value)}
               placeholder="粘贴 Sun-Panel 导出的 JSON..."
               className="w-full p-3 rounded-xl font-mono focus:outline-none resize-none"
-              style={{
-                background: 'var(--pill-bg)',
-                border: '1px solid var(--glass-border)',
-                color: 'var(--ink)',
-              }}
+              style={inputStyle}
             />
             <div className="flex items-center justify-between gap-2">
               <label className="cursor-pointer hover:underline" style={{ color: 'var(--brand)' }}>
@@ -230,9 +245,7 @@ export function BookmarkModal({
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) {
-                      void f.text().then(setSunJson);
-                    }
+                    if (f) void f.text().then(setSunJson);
                     e.target.value = '';
                   }}
                 />
@@ -263,28 +276,16 @@ export function BookmarkModal({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 className="h-9 px-3 rounded-xl focus:outline-none"
-                style={{
-                  background: 'var(--pill-bg)',
-                  border: '1px solid var(--glass-border)',
-                  color: 'var(--ink)',
-                }}
+                style={inputStyle}
               />
-              <select
-                value={groupId}
-                onChange={(e) => setGroupId(Number(e.target.value))}
-                className="h-9 px-2.5 rounded-xl focus:outline-none"
-                style={{
-                  background: 'rgba(var(--glass-rgb), 0.75)',
-                  border: '1px solid var(--glass-border)',
-                  color: 'var(--ink)',
-                }}
-              >
-                {ownGroups.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name}
-                  </option>
-                ))}
-              </select>
+              <OrbitSelect
+                size="md"
+                value={String(groupId)}
+                options={groupOptions}
+                onChange={(v) => setGroupId(Number(v))}
+                className="w-full rounded-xl"
+                ariaLabel="所属分组"
+              />
             </div>
 
             <div className="flex gap-1.5">
@@ -294,16 +295,12 @@ export function BookmarkModal({
                 value={newGroupName}
                 onChange={(e) => setNewGroupName(e.target.value)}
                 className="flex-1 h-8 px-2.5 rounded-lg focus:outline-none"
-                style={{
-                  background: 'var(--pill-bg)',
-                  border: '1px solid var(--glass-border)',
-                  color: 'var(--ink)',
-                }}
+                style={inputStyle}
               />
               <button
                 type="button"
                 onClick={() => void handleAddGroup()}
-                className="px-2.5 rounded-lg cursor-pointer"
+                className="px-2.5 rounded-lg cursor-pointer orbit-hover"
                 style={{ background: 'var(--pill-hover)' }}
               >
                 + 分组
@@ -312,27 +309,19 @@ export function BookmarkModal({
 
             <input
               type="text"
-              placeholder="简介 / 备注 (可选)"
+              placeholder="备注 (可选)"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full h-9 px-3 rounded-xl focus:outline-none"
-              style={{
-                background: 'var(--pill-bg)',
-                border: '1px solid var(--glass-border)',
-                color: 'var(--ink)',
-              }}
+              style={inputStyle}
             />
             <input
               type="text"
-              placeholder="内网 URL (http://192.168.1.10:8096)"
+              placeholder="内网 URL (LAN)"
               value={lanUrl}
               onChange={(e) => setLanUrl(e.target.value)}
               className="w-full h-9 px-3 rounded-xl font-mono focus:outline-none"
-              style={{
-                background: 'var(--pill-bg)',
-                border: '1px solid var(--glass-border)',
-                color: 'var(--ink)',
-              }}
+              style={inputStyle}
             />
             <input
               type="text"
@@ -340,23 +329,15 @@ export function BookmarkModal({
               value={tsUrl}
               onChange={(e) => setTsUrl(e.target.value)}
               className="w-full h-9 px-3 rounded-xl font-mono focus:outline-none"
-              style={{
-                background: 'var(--pill-bg)',
-                border: '1px solid var(--glass-border)',
-                color: 'var(--ink)',
-              }}
+              style={inputStyle}
             />
             <input
               type="text"
-              placeholder="外网 URL (留空则仅内网可达)"
+              placeholder="外网 URL (WAN)"
               value={wanUrl}
               onChange={(e) => setWanUrl(e.target.value)}
               className="w-full h-9 px-3 rounded-xl font-mono focus:outline-none"
-              style={{
-                background: 'var(--pill-bg)',
-                border: '1px solid var(--glass-border)',
-                color: 'var(--ink)',
-              }}
+              style={inputStyle}
             />
 
             <div className="pt-1 border-t space-y-1.5" style={{ borderColor: 'var(--glass-border)' }}>
@@ -377,8 +358,12 @@ export function BookmarkModal({
                 <button
                   type="button"
                   onClick={async () => {
-                    await onDelete(editingBookmark.id);
-                    onClose();
+                    try {
+                      await onDelete(editingBookmark.id);
+                      onClose();
+                    } catch (e) {
+                      onToast?.((e as Error).message || '删除书签失败', true);
+                    }
                   }}
                   className="h-8 px-3 rounded-lg flex items-center gap-1 cursor-pointer"
                   style={{ color: 'var(--danger)', background: 'var(--pill-bg)' }}
@@ -400,7 +385,7 @@ export function BookmarkModal({
                 </button>
                 <button
                   type="button"
-                  disabled={saving || !title.trim()}
+                  disabled={saving}
                   onClick={() => void handleSave()}
                   className="h-8 px-4 rounded-lg font-medium text-white cursor-pointer disabled:opacity-50"
                   style={{ background: 'var(--brand-solid)' }}
@@ -411,7 +396,6 @@ export function BookmarkModal({
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </CenteredModal>
   );
 }

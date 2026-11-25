@@ -15,11 +15,17 @@ func (p *Plugin) Manifest() plugin.Manifest {
 		Version:        "1.0.0",
 		Description:    "多引擎快捷切换、仅图标模式、站内书签/剪贴板/文件统一检索",
 		Icon:           "search",
-		Tier:           "builtin",
+		Tier:           "core",
+		Source:         "official",
 		DefaultEnabled: true,
 		Access: plugin.AccessSpec{
-			MinRole: "public",
-			Guest:   plugin.GuestSpec{Mode: "readonly"},
+			MinRole:     "public",
+			Guest:       plugin.GuestSpec{Mode: "readonly"},
+			AllowPublic: true,
+		},
+		Style: &plugin.StyleSpec{
+			Managed:          true,
+			SupportsCardless: true,
 		},
 		Contributes: plugin.ContributesSpec{
 			Widgets: []plugin.WidgetContrib{

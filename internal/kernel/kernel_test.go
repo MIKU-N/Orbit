@@ -10,7 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 
 	"orbit/internal/config"
 	"orbit/internal/db"
@@ -43,7 +47,7 @@ func newTestKernel(t *testing.T, wanMaxMB int64) (*kernel.Kernel, http.Handler) 
 	cfg := &config.Config{
 		Addr:         ":0",
 		DataDir:      dir,
-		LANMaxMB:     100,
+		LANMaxMB:     0,
 		TSMaxMB:      50,
 		WANMaxMB:     wanMaxMB,
 		MaxStorageMB: 500,
@@ -222,6 +226,25 @@ func TestKernelPluginsAndIsolation(t *testing.T) {
 	rr = uploadMultipart(bigData, "big.bin", "8.8.8.8")
 	if rr.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413 on oversized WAN upload, got %d", rr.Code)
+	}
+
+	// LAN upload with LANMaxMB=0 (unlimited) must succeed even above 2MB
+	lanBigData := bytes.Repeat([]byte("B"), 3*1024*1024)
+	rr = uploadMultipart(lanBigData, "lan-unlimited.bin", "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 on unlimited LAN upload, got %d: %s", rr.Code, rr.Body.String())
+	}
+	rr = doJSONReq(t, h, http.MethodGet, "/api/files", nil, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list files got %d: %s", rr.Code, rr.Body.String())
+	}
+	var filesListRes struct {
+		ZoneLimitMB    int64 `json:"zone_limit_mb"`
+		ZoneLimitBytes int64 `json:"zone_limit_bytes"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &filesListRes)
+	if filesListRes.ZoneLimitMB != 0 || filesListRes.ZoneLimitBytes != 0 {
+		t.Fatalf("expected LAN zone_limit 0 (unlimited), got mb=%d bytes=%d", filesListRes.ZoneLimitMB, filesListRes.ZoneLimitBytes)
 	}
 
 	// 7. Burn-after-read share
@@ -604,5 +627,378 @@ func TestStarterDataSunPanelBatchDeleteAndAvatar(t *testing.T) {
 	rr = doJSONReq(t, h, http.MethodGet, avRes.Avatar, nil, nil, "", "")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("deleted avatar expected 404, got %d", rr.Code)
+	}
+}
+
+func TestPluginProtocolTiersPolicyAndFileManager(t *testing.T) {
+	_, h := newTestKernel(t, 10)
+
+	// Setup admin + sub-account
+	rr := doJSONReq(t, h, http.MethodPost, "/api/auth/setup", map[string]string{
+		"username": "admin",
+		"password": "password123",
+	}, nil, "", "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setup got %d: %s", rr.Code, rr.Body.String())
+	}
+	adminCookies := rr.Result().Cookies()
+
+	rr = doJSONReq(t, h, http.MethodPost, "/api/auth/users", map[string]any{
+		"username": "member",
+		"password": "password123",
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create member got %d: %s", rr.Code, rr.Body.String())
+	}
+	rr = doJSONReq(t, h, http.MethodPost, "/api/auth/login", map[string]string{
+		"username": "member",
+		"password": "password123",
+	}, nil, "", "")
+	memberCookies := rr.Result().Cookies()
+
+	// 1. Verify 5 core + 3 light official plugins
+	rr = doJSONReq(t, h, http.MethodGet, "/api/plugins", nil, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list plugins got %d", rr.Code)
+	}
+	var pRes struct {
+		Plugins []plugin.PluginStateRecord `json:"plugins"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &pRes)
+	coreCount, lightCount := 0, 0
+	for _, rec := range pRes.Plugins {
+		switch rec.Manifest.Tier {
+		case "core":
+			coreCount++
+		case "light":
+			lightCount++
+		default:
+			t.Fatalf("unexpected plugin tier %q for %s", rec.Manifest.Tier, rec.Manifest.ID)
+		}
+		if rec.Manifest.Source != "official" {
+			t.Fatalf("expected official source for %s, got %q", rec.Manifest.ID, rec.Manifest.Source)
+		}
+	}
+	if coreCount != 5 || lightCount != 3 {
+		t.Fatalf("expected 5 core + 3 light plugins, got core=%d light=%d", coreCount, lightCount)
+	}
+
+	// 2. Visibility + Style overrides on hitokoto
+	managed := true
+	cardless := true
+	rr = doJSONReq(t, h, http.MethodPatch, "/api/plugins/orbit.hitokoto", map[string]any{
+		"visibility": map[string]any{
+			"minRole":   "admin",
+			"guestMode": "hidden",
+		},
+		"style": map[string]any{
+			"managed":  managed,
+			"cardless": cardless,
+		},
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch plugin policy got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Member should now be blocked from hitokoto plugin route, admin still allowed
+	rr = doJSONReq(t, h, http.MethodGet, "/api/hitokoto?mode=builtin", nil, memberCookies, "", "")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for member on admin-only hitokoto, got %d", rr.Code)
+	}
+	rr = doJSONReq(t, h, http.MethodGet, "/api/hitokoto?mode=builtin", nil, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for admin on admin-only hitokoto, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Verify persisted overrides returned in listPlugins
+	rr = doJSONReq(t, h, http.MethodGet, "/api/plugins", nil, adminCookies, "", "")
+	_ = json.Unmarshal(rr.Body.Bytes(), &pRes)
+	foundPolicy := false
+	for _, rec := range pRes.Plugins {
+		if rec.Manifest.ID == "orbit.hitokoto" {
+			if rec.Visibility == nil || rec.Visibility.MinRole != "admin" {
+				t.Fatalf("visibility override not persisted: %+v", rec.Visibility)
+			}
+			if rec.Style == nil || rec.Style.Cardless == nil || !*rec.Style.Cardless {
+				t.Fatalf("style override not persisted: %+v", rec.Style)
+			}
+			foundPolicy = true
+		}
+	}
+	if !foundPolicy {
+		t.Fatal("orbit.hitokoto not found in plugin list")
+	}
+
+	// 3. Staged file management: permanent upload, rename, inline preview, batch delete
+	uploadFile := func(name string, content []byte, permanent bool, cookies []*http.Cookie) int64 {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		if permanent {
+			_ = mw.WriteField("permanent", "1")
+			_ = mw.WriteField("ttl_hours", "0")
+		} else {
+			_ = mw.WriteField("ttl_hours", "24")
+		}
+		fw, _ := mw.CreateFormFile("file", name)
+		_, _ = fw.Write(content)
+		_ = mw.Close()
+		req := httptest.NewRequest(http.MethodPost, "/api/files", &body)
+		req.RemoteAddr = "192.168.1.50:12345"
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("upload %s got %d: %s", name, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			File struct {
+				ID        int64  `json:"id"`
+				ExpiresAt string `json:"expires_at"`
+			} `json:"file"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		if permanent && !strings.HasPrefix(out.File.ExpiresAt, "9999-") {
+			t.Fatalf("expected permanent expires_at 9999-..., got %q", out.File.ExpiresAt)
+		}
+		return out.File.ID
+	}
+
+	f1 := uploadFile("notes.txt", []byte("hello orbit"), true, adminCookies)
+	f2 := uploadFile("temp.txt", []byte("temp"), false, adminCookies)
+
+	// Rename + update TTL on f2
+	rr = doJSONReq(t, h, http.MethodPatch, "/api/files/"+strconv.FormatInt(f2, 10), map[string]any{
+		"orig_name": "renamed.txt",
+		"permanent": true,
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("patch file got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Inline preview header check
+	rr = doJSONReq(t, h, http.MethodGet, "/api/files/"+strconv.FormatInt(f1, 10)+"/download?inline=1", nil, adminCookies, "", "")
+	if rr.Code != http.StatusOK || !strings.HasPrefix(rr.Header().Get("Content-Disposition"), "inline;") {
+		t.Fatalf("expected inline disposition, got code=%d header=%q", rr.Code, rr.Header().Get("Content-Disposition"))
+	}
+
+	// Batch delete both staged files
+	rr = doJSONReq(t, h, http.MethodPost, "/api/files/batch-delete", map[string]any{
+		"ids": []int64{f1, f2},
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("batch delete files got %d: %s", rr.Code, rr.Body.String())
+	}
+	var delFilesRes struct {
+		Deleted int `json:"deleted"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &delFilesRes)
+	if delFilesRes.Deleted != 2 {
+		t.Fatalf("expected 2 deleted files, got %d", delFilesRes.Deleted)
+	}
+
+	// 4. Unified asset manager: upload wallpaper + icon, list, ownership check, batch delete
+	pngBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 0}
+	uploadMultipartPath := func(path, field, filename string, data []byte, cookies []*http.Cookie) string {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, _ := mw.CreateFormFile(field, filename)
+		_, _ = fw.Write(data)
+		_ = mw.Close()
+		req := httptest.NewRequest(http.MethodPost, path, &body)
+		req.RemoteAddr = "192.168.1.50:12345"
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+			t.Fatalf("upload %s got %d: %s", path, rec.Code, rec.Body.String())
+		}
+		var out struct {
+			URL string `json:"url"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out.URL
+	}
+
+	wpURL := uploadMultipartPath("/api/wallpaper/upload", "file", "bg.png", pngBytes, adminCookies)
+	iconURL := uploadMultipartPath("/api/icons/upload", "file", "app.png", pngBytes, adminCookies)
+	wpName := filepath.Base(wpURL)
+	iconName := filepath.Base(iconURL)
+
+	rr = doJSONReq(t, h, http.MethodGet, "/api/assets?category=all", nil, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list assets got %d: %s", rr.Code, rr.Body.String())
+	}
+	var assetsRes struct {
+		Assets []struct {
+			Category string `json:"category"`
+			Name     string `json:"name"`
+			Owned    bool   `json:"owned"`
+		} `json:"assets"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &assetsRes)
+	if len(assetsRes.Assets) < 2 {
+		t.Fatalf("expected >= 2 assets, got %+v", assetsRes.Assets)
+	}
+
+	// Member must not delete admin's wallpaper
+	rr = doJSONReq(t, h, http.MethodDelete, "/api/assets/wallpapers/"+wpName, nil, memberCookies, "", "")
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("member deleting admin asset expected 403, got %d", rr.Code)
+	}
+
+	// Admin batch-deletes both assets
+	rr = doJSONReq(t, h, http.MethodPost, "/api/assets/batch-delete", map[string]any{
+		"items": []map[string]string{
+			{"category": "wallpapers", "name": wpName},
+			{"category": "icons", "name": iconName},
+		},
+	}, adminCookies, "", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("batch delete assets got %d: %s", rr.Code, rr.Body.String())
+	}
+	var delAssetsRes struct {
+		Deleted int `json:"deleted"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &delAssetsRes)
+	if delAssetsRes.Deleted != 2 {
+		t.Fatalf("expected 2 deleted assets, got %d", delAssetsRes.Deleted)
+	}
+}
+
+func TestTargetedWSNotifications(t *testing.T) {
+	_, h := newTestKernel(t, 10)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	// Setup user
+	rr := doJSONReq(t, h, http.MethodPost, "/api/auth/setup", map[string]string{
+		"username": "wsuser",
+		"password": "password123",
+	}, nil, "", "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("setup got %d", rr.Code)
+	}
+	cookies := rr.Result().Cookies()
+	cookieHeader := http.Header{}
+	for _, c := range cookies {
+		cookieHeader.Add("Cookie", c.Name+"="+c.Value)
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws?device="
+	dialPeer := func(name string) (*websocket.Conn, string) {
+		conn, _, err := websocket.DefaultDialer.Dial(wsURL+name, cookieHeader)
+		if err != nil {
+			t.Fatalf("dial %s: %v", name, err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read initial peers for %s: %v", name, err)
+		}
+		var env struct {
+			Type    string `json:"type"`
+			Payload struct {
+				SelfPeerID string `json:"self_peer_id"`
+			} `json:"payload"`
+		}
+		if err := json.Unmarshal(data, &env); err != nil || env.Type != "peers_updated" || env.Payload.SelfPeerID == "" {
+			t.Fatalf("unexpected initial ws frame for %s: %s", name, string(data))
+		}
+		return conn, env.Payload.SelfPeerID
+	}
+
+	connA, peerA := dialPeer("DeviceA")
+	connB, peerB := dialPeer("DeviceB")
+	connC, peerC := dialPeer("DeviceC")
+
+	readEventOfType := func(conn *websocket.Conn, wantType string, timeout time.Duration) (map[string]any, bool) {
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			_ = conn.SetReadDeadline(deadline)
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return nil, false
+			}
+			var env struct {
+				Type    string         `json:"type"`
+				Payload map[string]any `json:"payload"`
+			}
+			if json.Unmarshal(data, &env) == nil && env.Type == wantType {
+				return env.Payload, true
+			}
+		}
+		return nil, false
+	}
+
+	// 1. PeerA sends clip specifically targeting PeerB
+	bodyBytes, _ := json.Marshal(map[string]string{
+		"content":        "only notify B",
+		"target_peer_id": peerB,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/clips", bytes.NewReader(bodyBytes))
+	req.RemoteAddr = "192.168.1.50:12345"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Orbit-Peer-Id", peerA)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("targeted clip create got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// PeerB must receive notify=true
+	evB, okB := readEventOfType(connB, "clip_updated", 2*time.Second)
+	if !okB || evB["notify"] != true || evB["target_peer_id"] != peerB {
+		t.Fatalf("expected PeerB notify=true, got ok=%v ev=%+v", okB, evB)
+	}
+	// PeerC must receive silent sync (notify=false)
+	evC, okC := readEventOfType(connC, "clip_updated", 2*time.Second)
+	if !okC || evC["notify"] != false {
+		t.Fatalf("expected PeerC notify=false, got ok=%v ev=%+v", okC, evC)
+	}
+	// Sender PeerA must NOT receive a notification frame
+	if evA, okA := readEventOfType(connA, "clip_updated", 250*time.Millisecond); okA {
+		t.Fatalf("sender PeerA should not receive clip_updated frame, got %+v", evA)
+	}
+
+	// 2. PeerA uploads file specifically targeting PeerC
+	var upBody bytes.Buffer
+	mw := multipart.NewWriter(&upBody)
+	_ = mw.WriteField("target_peer_id", peerC)
+	fw, _ := mw.CreateFormFile("file", "for-c.txt")
+	_, _ = fw.Write([]byte("target-c-only"))
+	_ = mw.Close()
+	upReq := httptest.NewRequest(http.MethodPost, "/api/files", &upBody)
+	upReq.RemoteAddr = "192.168.1.50:12345"
+	upReq.Header.Set("Content-Type", mw.FormDataContentType())
+	upReq.Header.Set("X-Orbit-Peer-Id", peerA)
+	for _, c := range cookies {
+		upReq.AddCookie(c)
+	}
+	upRec := httptest.NewRecorder()
+	h.ServeHTTP(upRec, upReq)
+	if upRec.Code != http.StatusCreated {
+		t.Fatalf("targeted file upload got %d: %s", upRec.Code, upRec.Body.String())
+	}
+
+	fEvC, fOkC := readEventOfType(connC, "files_updated", 2*time.Second)
+	if !fOkC || fEvC["notify"] != true || fEvC["target_peer_id"] != peerC {
+		t.Fatalf("expected PeerC file notify=true, got ok=%v ev=%+v", fOkC, fEvC)
+	}
+	fEvB, fOkB := readEventOfType(connB, "files_updated", 2*time.Second)
+	if !fOkB || fEvB["notify"] != false {
+		t.Fatalf("expected PeerB file notify=false, got ok=%v ev=%+v", fOkB, fEvB)
+	}
+	if fEvA, fOkA := readEventOfType(connA, "files_updated", 250*time.Millisecond); fOkA {
+		t.Fatalf("sender PeerA should not receive files_updated frame, got %+v", fEvA)
 	}
 }

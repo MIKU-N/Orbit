@@ -1,4 +1,5 @@
-import type { FontConfig } from '../types';
+import type { FontConfig, ResourceCdnConfig } from '../types';
+import { resolveCdnBase } from './cdn';
 
 export interface BuiltinFont {
   id: string;
@@ -6,18 +7,35 @@ export interface BuiltinFont {
   desc: string;
   sample: string;
   family: string;
-  cssUrls: string[];
+  /** Relative npm package CSS paths loaded only when an external CDN is explicitly enabled. */
+  npmCssPaths: string[];
 }
+
+export const SYSTEM_FALLBACK_FAMILY =
+  "system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', sans-serif";
 
 export const BUILTIN_FONTS: BuiltinFont[] = [
   {
+    id: 'system',
+    name: '系统原生',
+    desc: '100% 本地零网络加载',
+    sample: 'Orbit 星轨 12:45',
+    family: SYSTEM_FALLBACK_FAMILY,
+    npmCssPaths: [],
+  },
+  {
     id: 'noto-sans',
     name: '思源黑体',
-    desc: '开源现代中文无衬线',
+    desc: '现代中文无衬线（可选 CDN）',
     sample: 'Orbit 星轨 12:45',
-    family: "'Noto Sans SC', 'Inter', system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif",
-    cssUrls: [
-      'https://fonts.loli.net/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap',
+    family: `'Noto Sans SC', 'Inter', ${SYSTEM_FALLBACK_FAMILY}`,
+    npmCssPaths: [
+      '@fontsource/inter@5.2.5/400.css',
+      '@fontsource/inter@5.2.5/500.css',
+      '@fontsource/inter@5.2.5/600.css',
+      '@fontsource/noto-sans-sc@5.2.5/400.css',
+      '@fontsource/noto-sans-sc@5.2.5/500.css',
+      '@fontsource/noto-sans-sc@5.2.5/700.css',
     ],
   },
   {
@@ -25,9 +43,10 @@ export const BUILTIN_FONTS: BuiltinFont[] = [
     name: 'Ubuntu Mono',
     desc: '开源极客等宽字体',
     sample: 'Orbit 星轨 12:45',
-    family: "'Ubuntu Mono', 'Noto Sans SC', ui-monospace, monospace",
-    cssUrls: [
-      'https://fonts.loli.net/css2?family=Ubuntu+Mono:wght@400;700&family=Noto+Sans+SC:wght@400;500;700&display=swap',
+    family: `'Ubuntu Mono', 'Noto Sans SC', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`,
+    npmCssPaths: [
+      '@fontsource/ubuntu-mono@5.2.5/400.css',
+      '@fontsource/ubuntu-mono@5.2.5/700.css',
     ],
   },
   {
@@ -35,19 +54,19 @@ export const BUILTIN_FONTS: BuiltinFont[] = [
     name: 'OPPO Sans 4',
     desc: 'OPPO 现代可变无衬线',
     sample: 'Orbit 星轨 12:45',
-    family: "'OPPO Sans 4.0', 'OPPO Sans', system-ui, -apple-system, 'PingFang SC', sans-serif",
-    cssUrls: ['https://cdn.jsdelivr.net/npm/@luzixu/oppo-sans@0.1.2/wght.css'],
+    family: `'OPPO Sans 4.0', 'OPPO Sans', ${SYSTEM_FALLBACK_FAMILY}`,
+    npmCssPaths: ['@luzixu/oppo-sans@0.1.2/wght.css'],
   },
   {
     id: 'mi-sans',
     name: 'Mi Sans',
     desc: '小米极简几何无衬线',
     sample: 'Orbit 星轨 12:45',
-    family: "'MiSans', system-ui, -apple-system, 'PingFang SC', sans-serif",
-    cssUrls: [
-      'https://cdn.jsdelivr.net/npm/misans@latest/lib/Normal/MiSans-Regular.min.css',
-      'https://cdn.jsdelivr.net/npm/misans@latest/lib/Normal/MiSans-Medium.min.css',
-      'https://cdn.jsdelivr.net/npm/misans@latest/lib/Normal/MiSans-Bold.min.css',
+    family: `'MiSans', ${SYSTEM_FALLBACK_FAMILY}`,
+    npmCssPaths: [
+      'misans@4.0.0/lib/Normal/MiSans-Regular.min.css',
+      'misans@4.0.0/lib/Normal/MiSans-Medium.min.css',
+      'misans@4.0.0/lib/Normal/MiSans-Bold.min.css',
     ],
   },
 ];
@@ -71,6 +90,7 @@ function syncBuiltinFontLinks(urls: string[]) {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = href;
+    link.crossOrigin = 'anonymous';
     link.setAttribute('data-orbit-builtin-font', '1');
     link.setAttribute('data-href', href);
     document.head.appendChild(link);
@@ -110,13 +130,20 @@ function upsertStyleTag(id: string, cssText?: string) {
   document.head.appendChild(style);
 }
 
-export function applyGlobalFont(config?: FontConfig) {
-  const activeId = config?.activeId || 'noto-sans';
+function buildFontUrls(paths: string[], cdnBase: string): string[] {
+  if (!cdnBase || paths.length === 0) return [];
+  return paths.map((p) => `${cdnBase}/${p.replace(/^\/+/, '')}`);
+}
+
+export function applyGlobalFont(config?: FontConfig, cdnConfig?: ResourceCdnConfig) {
+  const activeId = config?.activeId || 'system';
+  const cdnBase = resolveCdnBase(cdnConfig);
   const builtin = BUILTIN_FONTS.find((f) => f.id === activeId);
   const custom = config?.customFonts?.find((f) => f.id === activeId);
 
   if (custom) {
-    syncBuiltinFontLinks(BUILTIN_FONTS[0].cssUrls);
+    // Never inject external builtin font CDNs when a local/custom font is selected
+    syncBuiltinFontLinks([]);
     if (custom.kind === 'css') {
       upsertStylesheetLink('orbit-font-custom-css', custom.url);
       upsertStyleTag('orbit-font-custom-face');
@@ -132,7 +159,7 @@ export function applyGlobalFont(config?: FontConfig) {
     const faceQuoted = `'${custom.family.replace(/'/g, '')}'`;
     document.documentElement.style.setProperty(
       '--orbit-font',
-      `${faceQuoted}, ${BUILTIN_FONTS[0].family}`,
+      `${faceQuoted}, ${SYSTEM_FALLBACK_FAMILY}`,
     );
     return;
   }
@@ -140,6 +167,6 @@ export function applyGlobalFont(config?: FontConfig) {
   upsertStylesheetLink('orbit-font-custom-css');
   upsertStyleTag('orbit-font-custom-face');
   const chosen = builtin || BUILTIN_FONTS[0];
-  syncBuiltinFontLinks(chosen.cssUrls);
+  syncBuiltinFontLinks(buildFontUrls(chosen.npmCssPaths, cdnBase));
   document.documentElement.style.setProperty('--orbit-font', chosen.family);
 }

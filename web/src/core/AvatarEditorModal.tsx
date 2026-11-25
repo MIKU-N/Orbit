@@ -10,6 +10,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
+import { CenteredModal } from '../sdk/primitives';
 
 interface AvatarEditorModalProps {
   open: boolean;
@@ -263,8 +264,6 @@ export function AvatarEditorModal({
     }
   }, [open, imgEl, offset, zoom, rotation, flipX, dragging]);
 
-  if (!open) return null;
-
   const updateZoom = (nextZoom: number) => {
     const clampedZ = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Number(nextZoom.toFixed(2))));
     setZoom(clampedZ);
@@ -373,24 +372,21 @@ export function AvatarEditorModal({
   const rotPct = ((rotation + 180) / 360) * 100;
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-      onClick={(e) => {
-        e.stopPropagation();
+    <CenteredModal
+      open={open}
+      onClose={() => {
         if (!saving) onClose();
       }}
+      closeOnBackdrop={!saving}
+      zIndexClass="z-[60]"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const f = e.dataTransfer.files?.[0];
+        if (f) loadFile(f);
+      }}
+      panelClassName="w-full max-w-md p-5 space-y-4 text-xs"
     >
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-xs" />
-      <div
-        onClick={(e) => e.stopPropagation()}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          const f = e.dataTransfer.files?.[0];
-          if (f) loadFile(f);
-        }}
-        className="relative w-full max-w-md glass-strong rounded-2xl p-5 space-y-4 pop-in text-xs"
-      >
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold">编辑用户头像</h3>
@@ -469,7 +465,7 @@ export function AvatarEditorModal({
               type="button"
               disabled={!imgEl}
               onClick={() => updateZoom(zoom - 0.15)}
-              className="p-1 rounded-md hover:bg-white/10 cursor-pointer disabled:opacity-40"
+              className="p-1 rounded-md orbit-hover cursor-pointer disabled:opacity-40"
               title="缩小"
             >
               <ZoomOut className="w-3.5 h-3.5" />
@@ -489,7 +485,7 @@ export function AvatarEditorModal({
               type="button"
               disabled={!imgEl}
               onClick={() => updateZoom(zoom + 0.15)}
-              className="p-1 rounded-md hover:bg-white/10 cursor-pointer disabled:opacity-40"
+              className="p-1 rounded-md orbit-hover cursor-pointer disabled:opacity-40"
               title="放大"
             >
               <ZoomIn className="w-3.5 h-3.5" />
@@ -505,7 +501,7 @@ export function AvatarEditorModal({
               type="button"
               disabled={!imgEl}
               onClick={() => updateRotation(rotation - 90)}
-              className="p-1 rounded-md hover:bg-white/10 cursor-pointer disabled:opacity-40"
+              className="p-1 rounded-md orbit-hover cursor-pointer disabled:opacity-40"
               title="逆时针 90°"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -525,7 +521,7 @@ export function AvatarEditorModal({
               type="button"
               disabled={!imgEl}
               onClick={() => updateRotation(rotation + 90)}
-              className="p-1 rounded-md hover:bg-white/10 cursor-pointer disabled:opacity-40"
+              className="p-1 rounded-md orbit-hover cursor-pointer disabled:opacity-40"
               title="顺时针 90°"
             >
               <RotateCw className="w-3.5 h-3.5" />
@@ -600,7 +596,6 @@ export function AvatarEditorModal({
             <span>{saving ? '上传中...' : '保存头像'}</span>
           </button>
         </div>
-      </div>
-    </div>
+    </CenteredModal>
   );
 }

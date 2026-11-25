@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Pause, Play, Quote, RefreshCw, Settings2 } from 'lucide-react';
 import { api } from '../../api/client';
-import { MotionCard } from '../../sdk/primitives';
+import { WidgetSurface } from '../../sdk/primitives';
 import type { HitokotoConfig, HitokotoQuote } from '../../types';
 
 interface HitokotoWidgetProps {
   config: HitokotoConfig;
+  cardless: boolean;
+  managed: boolean;
   enableTilt: boolean;
   layoutEditing: boolean;
-  readOnly?: boolean;
-  onCopy: (text: string, label?: string) => void;
-  onOpenSettings: () => void;
+  onToast: (msg: string, warn?: boolean) => void;
 }
 
 const LOCAL_FALLBACK_QUOTES: HitokotoQuote[] = [
@@ -43,16 +42,14 @@ function parseCustomLines(lines: string[]): HitokotoQuote[] {
 
 export function HitokotoWidget({
   config,
+  cardless,
+  managed,
   enableTilt,
   layoutEditing,
-  readOnly = false,
-  onCopy,
-  onOpenSettings,
+  onToast,
 }: HitokotoWidgetProps) {
   const [builtinPool, setBuiltinPool] = useState<HitokotoQuote[]>(LOCAL_FALLBACK_QUOTES);
   const [quote, setQuote] = useState<HitokotoQuote>(LOCAL_FALLBACK_QUOTES[0]);
-  const [loading, setLoading] = useState(false);
-  const [paused, setPaused] = useState(false);
   const lastTextRef = useRef(LOCAL_FALLBACK_QUOTES[0].text);
   const customIdxRef = useRef(0);
 
@@ -80,7 +77,6 @@ export function HitokotoWidget({
   const pickLocalNext = useCallback((): HitokotoQuote => {
     const pool = localPool.length > 0 ? localPool : LOCAL_FALLBACK_QUOTES;
     if (pool.length === 1) return pool[0];
-    // Rotate sequentially through custom quotes first when user added custom lines in builtin mode
     if (customParsed.length > 0 && config.mode === 'builtin') {
       const idx = customIdxRef.current % pool.length;
       customIdxRef.current += 1;
@@ -103,7 +99,6 @@ export function HitokotoWidget({
         return;
       }
 
-      setLoading(true);
       try {
         const res = await api.getHitokoto({
           mode: config.mode,
@@ -116,18 +111,18 @@ export function HitokotoWidget({
           setQuote(res);
           return;
         }
-        throw new Error('empty quote');
-      } catch {
+        throw new Error('接口未返回有效文案');
+      } catch (err) {
         if (config.mode === 'auto' || !manual) {
           const fallback = pickLocalNext();
           lastTextRef.current = fallback.text;
           setQuote(fallback);
+        } else {
+          onToast((err as Error).message || '获取一言失败', true);
         }
-      } finally {
-        setLoading(false);
       }
     },
-    [config.apiUrl, config.mode, config.types, pickLocalNext],
+    [config.apiUrl, config.mode, config.types, onToast, pickLocalNext],
   );
 
   useEffect(() => {
@@ -135,102 +130,43 @@ export function HitokotoWidget({
   }, [fetchNext]);
 
   useEffect(() => {
-    if (!config.autoRotate || paused) return;
+    if (!config.autoRotate) return;
     const ms = Math.max(5, config.intervalSeconds || 30) * 1000;
     const id = window.setInterval(() => {
       void fetchNext(false);
     }, ms);
     return () => window.clearInterval(id);
-  }, [config.autoRotate, config.intervalSeconds, fetchNext, paused]);
+  }, [config.autoRotate, config.intervalSeconds, fetchNext]);
 
   const attribution = [quote.from_who, quote.from].filter(Boolean).join(' · ');
   const isLeft = config.align === 'left';
 
   return (
-    <MotionCard
+    <WidgetSurface
+      cardless={cardless}
+      managed={managed}
       enableTilt={enableTilt}
-      disabled={layoutEditing}
-      className="rounded-2xl px-4 py-3 group"
+      layoutEditing={layoutEditing}
+      onClick={() => {
+        if (!layoutEditing) void fetchNext(true);
+      }}
+      cardClassName="rounded-2xl px-4 py-2.5 cursor-pointer"
+      plainClassName="px-2 py-1 cursor-pointer"
+      title="点击切换"
     >
-      <div className="flex items-center gap-3">
-        <span
-          className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
-          style={{ background: 'var(--pill-bg)', color: 'var(--brand)' }}
-        >
-          <Quote className="w-4 h-4" />
-        </span>
-
-        <button
-          type="button"
-          onClick={() => {
-            if (!layoutEditing) void fetchNext(true);
-          }}
-          className={`min-w-0 flex-1 cursor-pointer ${isLeft ? 'text-left' : 'text-center'}`}
-          title="点击切换下一条一言"
-        >
-          <div className="text-xs sm:text-[13px] font-medium leading-relaxed break-words">
-            {quote.text}
-          </div>
-          {config.showAuthor && attribution && (
-            <div className="text-[11px] mt-0.5 truncate" style={{ color: 'var(--ink-muted)' }}>
-              —— {attribution}
-            </div>
-          )}
-        </button>
-
-        <div className="flex items-center gap-1 shrink-0 opacity-75 group-hover:opacity-100 transition-opacity">
-          {config.autoRotate && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPaused((v) => !v);
-              }}
-              className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"
-              title={paused ? '继续轮播' : '暂停轮播'}
-            >
-              {paused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-            </button>
-          )}
-          <button
-            type="button"
-            disabled={loading}
-            onClick={(e) => {
-              e.stopPropagation();
-              void fetchNext(true);
-            }}
-            className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer disabled:opacity-50"
-            title="换一条"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              const text = attribution ? `${quote.text} —— ${attribution}` : quote.text;
-              onCopy(text, '已复制一言');
-            }}
-            className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"
-            title="复制文案"
-          >
-            <Copy className="w-3.5 h-3.5" />
-          </button>
-          {!readOnly && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onOpenSettings();
-              }}
-              className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"
-              title="一言设置"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-            </button>
-          )}
+      <div className={isLeft ? 'text-left' : 'text-center'}>
+        <div className="text-xs sm:text-[13px] font-medium leading-relaxed break-words">
+          {quote.text}
         </div>
+        {config.showAuthor && attribution && (
+          <div
+            className={`text-[11px] mt-0.5 truncate ${cardless ? 'plain-muted' : ''}`}
+            style={cardless ? undefined : { color: 'var(--ink-muted)' }}
+          >
+            —— {attribution}
+          </div>
+        )}
       </div>
-    </MotionCard>
+    </WidgetSurface>
   );
 }

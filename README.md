@@ -108,8 +108,8 @@ ORBIT_TRUST_PROXY=false
 # 若同时通过公网域名反代访问，填写公网域名（逗号分隔），强制执行 WAN 限额策略
 ORBIT_WAN_HOSTS=orbit.example.com
 
-# 按需调整文件大小与暂存总容量上限（单位：MB）
-ORBIT_LAN_MAX_MB=10240
+# 按需调整文件大小与暂存总容量上限（单位：MB；0 表示不限制）
+ORBIT_LAN_MAX_MB=0
 ORBIT_TS_MAX_MB=2048
 ORBIT_WAN_MAX_MB=100
 ORBIT_MAX_STORAGE_MB=20480
@@ -185,10 +185,10 @@ make build
 | `ORBIT_ADDR` | `:8080` | 监听地址与端口（也兼容 `ORBIT_PORT`） |
 | `ORBIT_DATA_DIR` | `./data`（容器内 `/app/data`） | SQLite 数据库、`.jwt_secret`、外部插件与文件存储目录 |
 | `ORBIT_JWT_SECRET` | 自动生成 | 可选：自定义 JWT 签名密钥（留空时自动生成并持久化到 `ORBIT_DATA_DIR/.jwt_secret`） |
-| `ORBIT_LAN_MAX_MB` | `10240` | 局域网单文件上限 (MB) |
-| `ORBIT_TS_MAX_MB` | `2048` | Tailscale 单文件上限 (MB) |
-| `ORBIT_WAN_MAX_MB` | `100` | 公网单文件上限 (MB) |
-| `ORBIT_MAX_STORAGE_MB` | `20480` | 暂存区总容量上限 (MB) |
+| `ORBIT_LAN_MAX_MB` | `0`（不限） | 局域网单文件上限 (MB)，`0` 表示不限制 |
+| `ORBIT_TS_MAX_MB` | `2048` | Tailscale 单文件上限 (MB)，`0` 表示不限制 |
+| `ORBIT_WAN_MAX_MB` | `100` | 公网单文件上限 (MB)，`0` 表示不限制 |
+| `ORBIT_MAX_STORAGE_MB` | `20480` | 暂存区总容量上限 (MB)，`0` 表示不限制 |
 | `ORBIT_TRUST_PROXY` | `true`（`prod` 编排默认 `false`） | 是否信任内网/Tailscale 反代传入的 `X-Forwarded-For` / `X-Real-IP` |
 | `ORBIT_WAN_HOSTS` | 空 | 逗号分隔的公网域名列表，匹配时强制按外网 (`wan`) 策略限额 |
 | `ORBIT_ADMIN_USER` / `ORBIT_ADMIN_PASS` | 空 | 可选：仅在数据库尚无任何用户时自动初始化首个管理员账号（正式环境推荐通过网页向导创建） |

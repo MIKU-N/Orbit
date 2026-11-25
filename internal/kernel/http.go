@@ -29,31 +29,51 @@ func (k *Kernel) ListPluginRecords(isAdmin bool) []plugin.PluginStateRecord {
 
 	sort.Strings(extIDs)
 
-	states := make(map[string]struct {
-		enabled bool
-		cfg     map[string]any
-	})
-	rows, err := k.db.Query(`SELECT plugin_id, enabled, config_json FROM plugin_states`)
+	type pluginRowState struct {
+		enabled    bool
+		cfg        map[string]any
+		visibility *plugin.VisibilityOverride
+		style      *plugin.StyleOverride
+	}
+	states := make(map[string]pluginRowState)
+	rows, err := k.db.Query(`SELECT plugin_id, enabled, config_json, visibility_json, style_json FROM plugin_states`)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
-			var id, cfgRaw string
+			var id, cfgRaw, visRaw, styleRaw string
 			var en int
-			if err := rows.Scan(&id, &en, &cfgRaw); err == nil {
+			if err := rows.Scan(&id, &en, &cfgRaw, &visRaw, &styleRaw); err == nil {
 				var cfgMap map[string]any
 				_ = json.Unmarshal([]byte(cfgRaw), &cfgMap)
 				if cfgMap == nil {
 					cfgMap = map[string]any{}
 				}
-				states[id] = struct {
-					enabled bool
-					cfg     map[string]any
-				}{enabled: en == 1, cfg: cfgMap}
+				var visOv *plugin.VisibilityOverride
+				if trimmed := strings.TrimSpace(visRaw); trimmed != "" && trimmed != "{}" && trimmed != "null" {
+					var v plugin.VisibilityOverride
+					if json.Unmarshal([]byte(trimmed), &v) == nil && (v.MinRole != "" || v.GuestMode != "") {
+						visOv = &v
+					}
+				}
+				var styleOv *plugin.StyleOverride
+				if trimmed := strings.TrimSpace(styleRaw); trimmed != "" && trimmed != "{}" && trimmed != "null" {
+					var s plugin.StyleOverride
+					if json.Unmarshal([]byte(trimmed), &s) == nil && (s.Managed != nil || s.Cardless != nil || s.HideHeader != nil) {
+						styleOv = &s
+					}
+				}
+				states[id] = pluginRowState{
+					enabled:    en == 1,
+					cfg:        cfgMap,
+					visibility: visOv,
+					style:      styleOv,
+				}
 			}
 		}
 	}
 
 	buildRecord := func(m plugin.Manifest) plugin.PluginStateRecord {
+		_ = plugin.ValidateManifest(&m)
 		rec := plugin.PluginStateRecord{
 			Manifest: m,
 			Enabled:  m.DefaultEnabled,
@@ -61,6 +81,27 @@ func (k *Kernel) ListPluginRecords(isAdmin bool) []plugin.PluginStateRecord {
 		}
 		if st, ok := states[m.ID]; ok {
 			rec.Enabled = st.enabled
+			rec.Visibility = st.visibility
+			rec.Style = st.style
+			if st.visibility != nil {
+				rec.Manifest.Access = rec.Manifest.EffectiveAccess(st.visibility)
+			}
+			if st.style != nil {
+				if rec.Manifest.Style == nil {
+					rec.Manifest.Style = &plugin.StyleSpec{Managed: true, SupportsCardless: true}
+				}
+				styleCopy := *rec.Manifest.Style
+				if st.style.Managed != nil {
+					styleCopy.Managed = *st.style.Managed
+				}
+				if st.style.Cardless != nil {
+					styleCopy.DefaultCardless = *st.style.Cardless
+				}
+				if st.style.HideHeader != nil {
+					styleCopy.HideHeader = *st.style.HideHeader
+				}
+				rec.Manifest.Style = &styleCopy
+			}
 			if isAdmin {
 				rec.Config = st.cfg
 			} else if m.External != nil {
@@ -123,8 +164,10 @@ func (k *Kernel) handlePatchPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Enabled *bool          `json:"enabled"`
-		Config  map[string]any `json:"config"`
+		Enabled    *bool                      `json:"enabled"`
+		Config     map[string]any             `json:"config"`
+		Visibility *plugin.VisibilityOverride `json:"visibility"`
+		Style      *plugin.StyleOverride      `json:"style"`
 	}
 	if err := plugin.DecodeJSON(r, &req); err != nil {
 		plugin.WriteErr(w, http.StatusBadRequest, "invalid json")
@@ -133,7 +176,12 @@ func (k *Kernel) handlePatchPlugin(w http.ResponseWriter, r *http.Request) {
 
 	curEnabled := 1
 	curCfgRaw := "{}"
-	err := k.db.QueryRow(`SELECT enabled, config_json FROM plugin_states WHERE plugin_id = ?`, id).Scan(&curEnabled, &curCfgRaw)
+	curVisRaw := "{}"
+	curStyleRaw := "{}"
+	err := k.db.QueryRow(
+		`SELECT enabled, config_json, visibility_json, style_json FROM plugin_states WHERE plugin_id = ?`,
+		id,
+	).Scan(&curEnabled, &curCfgRaw, &curVisRaw, &curStyleRaw)
 	if err != nil && err != sql.ErrNoRows {
 		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
 		return
@@ -151,17 +199,46 @@ func (k *Kernel) handlePatchPlugin(w http.ResponseWriter, r *http.Request) {
 			curCfgRaw = string(b)
 		}
 	}
+	if req.Visibility != nil {
+		var clean plugin.VisibilityOverride
+		switch req.Visibility.MinRole {
+		case "public", "user", "admin":
+			clean.MinRole = req.Visibility.MinRole
+		}
+		switch req.Visibility.GuestMode {
+		case "hidden", "readonly", "full", "login-prompt":
+			clean.GuestMode = req.Visibility.GuestMode
+		}
+		if b, err := json.Marshal(clean); err == nil {
+			curVisRaw = string(b)
+		}
+	}
+	if req.Style != nil {
+		var merged plugin.StyleOverride
+		_ = json.Unmarshal([]byte(curStyleRaw), &merged)
+		if req.Style.Managed != nil {
+			merged.Managed = req.Style.Managed
+		}
+		if req.Style.Cardless != nil {
+			merged.Cardless = req.Style.Cardless
+		}
+		if req.Style.HideHeader != nil {
+			merged.HideHeader = req.Style.HideHeader
+		}
+		if b, err := json.Marshal(merged); err == nil {
+			curStyleRaw = string(b)
+		}
+	}
 
 	if _, err := k.db.Exec(
-		`INSERT INTO plugin_states (plugin_id, enabled, config_json, updated_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(plugin_id) DO UPDATE SET enabled = excluded.enabled, config_json = excluded.config_json, updated_at = excluded.updated_at`,
-		id, curEnabled, curCfgRaw, time.Now().UTC(),
+		`INSERT INTO plugin_states (plugin_id, enabled, config_json, visibility_json, style_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(plugin_id) DO UPDATE SET enabled = excluded.enabled, config_json = excluded.config_json, visibility_json = excluded.visibility_json, style_json = excluded.style_json, updated_at = excluded.updated_at`,
+		id, curEnabled, curCfgRaw, curVisRaw, curStyleRaw, time.Now().UTC(),
 	); err != nil {
 		plugin.WriteErr(w, http.StatusInternalServerError, "database error")
 		return
 	}
 
-	// Broadcast state update to connected sessions so dashboards sync immediately
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"plugins": k.ListPluginRecords(true),
@@ -206,6 +283,9 @@ func (k *Kernel) Routes() http.Handler {
 	mux.HandleFunc("POST /api/icons/upload", k.RequireAuth(k.handleIconUpload))
 	mux.HandleFunc("POST /api/icons/fetch", k.RequireAuth(k.handleIconFetch))
 	mux.HandleFunc("GET /api/icons/custom/{name}", k.handleServeCustomIcon)
+	mux.HandleFunc("GET /api/assets", k.RequireAuth(k.handleListAssets))
+	mux.HandleFunc("DELETE /api/assets/{category}/{name}", k.RequireAuth(k.handleDeleteAsset))
+	mux.HandleFunc("POST /api/assets/batch-delete", k.RequireAuth(k.handleBatchDeleteAssets))
 
 	// Plugin Management & Phase 2 External Light Plugin Host Routes
 	mux.HandleFunc("GET /api/plugins", k.RequireAuth(k.handleListPlugins))
@@ -252,7 +332,7 @@ func withCORS(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Orbit-Peer-Id, X-Orbit-Target-Peer-Id")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

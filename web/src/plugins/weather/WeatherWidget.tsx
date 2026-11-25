@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Cloud, CloudLightning, CloudRain, Moon, Snowflake, Sun } from 'lucide-react';
 import type { WeatherConfig, WeatherPayload } from '../../types';
-import { MotionCard } from '../../sdk/primitives';
+import { WidgetSurface } from '../../sdk/primitives';
 
 interface WeatherWidgetProps {
   weather: WeatherPayload | null;
   config: WeatherConfig;
+  theme: 'dark' | 'light';
+  cardless: boolean;
+  managed: boolean;
   showSeconds?: boolean;
   enableTilt: boolean;
   layoutEditing: boolean;
@@ -22,6 +25,9 @@ function formatTempVal(c: number, unit: 'C' | 'F'): number {
 export function WeatherWidget({
   weather,
   config,
+  theme,
+  cardless,
+  managed,
   showSeconds = false,
   enableTilt,
   layoutEditing,
@@ -30,6 +36,7 @@ export function WeatherWidget({
 }: WeatherWidgetProps) {
   const unit = config.unit || 'C';
   const style = config.style || 'standard';
+  const isLightSurface = !cardless && theme === 'light';
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -43,18 +50,18 @@ export function WeatherWidget({
     switch (weather?.kind) {
       case 'clear':
         return weather.is_day === false ? (
-          <Moon className="w-5 h-5 text-amber-200" />
+          <Moon className={`w-5 h-5 ${isLightSurface ? 'text-indigo-500' : 'text-amber-200'}`} />
         ) : (
-          <Sun className="w-5 h-5 text-amber-300" />
+          <Sun className={`w-5 h-5 ${isLightSurface ? 'text-amber-500' : 'text-amber-300'}`} />
         );
       case 'rain':
-        return <CloudRain className="w-5 h-5 text-sky-300" />;
+        return <CloudRain className={`w-5 h-5 ${isLightSurface ? 'text-sky-600' : 'text-sky-300'}`} />;
       case 'snow':
-        return <Snowflake className="w-5 h-5 text-sky-200" />;
+        return <Snowflake className={`w-5 h-5 ${isLightSurface ? 'text-sky-500' : 'text-sky-200'}`} />;
       case 'storm':
-        return <CloudLightning className="w-5 h-5 text-amber-400" />;
+        return <CloudLightning className={`w-5 h-5 ${isLightSurface ? 'text-amber-600' : 'text-amber-400'}`} />;
       default:
-        return <Cloud className="w-5 h-5 text-sky-200" />;
+        return <Cloud className={`w-5 h-5 ${isLightSurface ? 'text-sky-600' : 'text-sky-200'}`} />;
     }
   })();
 
@@ -95,6 +102,9 @@ export function WeatherWidget({
         ? (weather?.slots || []).slice(0, forecastCount)
         : [];
 
+  const mutedColor = cardless ? 'var(--hero-ink-muted)' : 'var(--ink-muted)';
+  const dividerColor = cardless ? 'rgba(255, 255, 255, 0.28)' : 'var(--glass-border)';
+
   if (style === 'banner') {
     const hh = String(now.getHours()).padStart(2, '0');
     const mm = String(now.getMinutes()).padStart(2, '0');
@@ -104,13 +114,18 @@ export function WeatherWidget({
     const customCopy = config.customText?.trim() || `此刻 · ${cityDisplay}`;
 
     return (
-      <MotionCard
+      <WidgetSurface
+        cardless={cardless}
+        managed={managed}
         enableTilt={enableTilt}
-        disabled={layoutEditing}
+        layoutEditing={layoutEditing}
         onClick={() => {
           if (!layoutEditing && !readOnly) onOpenSettings();
         }}
-        className={`rounded-2xl p-4 min-h-[108px] flex flex-col justify-between gap-2.5 ${
+        cardClassName={`rounded-2xl p-4 min-h-[108px] flex flex-col justify-between gap-2.5 ${
+          readOnly ? 'cursor-default' : 'cursor-pointer'
+        }`}
+        plainClassName={`px-2 py-2 flex flex-col justify-between gap-2 ${
           readOnly ? 'cursor-default' : 'cursor-pointer'
         }`}
       >
@@ -124,7 +139,7 @@ export function WeatherWidget({
             <div className="text-2xl sm:text-[26px] font-light tracking-tight tabular-nums leading-none">
               {timeStr}
             </div>
-            <div className="text-[11px] mt-1 tabular-nums" style={{ color: 'var(--ink-muted)' }}>
+            <div className="text-[11px] mt-1 tabular-nums" style={{ color: mutedColor }}>
               {dateStr}
             </div>
           </div>
@@ -132,21 +147,21 @@ export function WeatherWidget({
 
         <div
           className="flex items-center justify-between gap-2 pt-2 border-t text-xs"
-          style={{ borderColor: 'var(--glass-border)' }}
+          style={{ borderColor: dividerColor }}
         >
           <div className="flex items-center gap-2 min-w-0">
             <span className="shrink-0 weather-float">{iconEl}</span>
             <span className="font-semibold text-sm tabular-nums shrink-0">
               {weather ? `${formatTempVal(weather.temp_c, unit)}°` : '--°'}
             </span>
-            <span className="truncate" style={{ color: 'var(--ink-muted)' }}>
+            <span className="truncate" style={{ color: mutedColor }}>
               {weather ? `${weather.cond} · ${cityDisplay}` : '加载中'}
             </span>
           </div>
 
           <div
             className="truncate text-right shrink-0 max-w-[46%]"
-            style={{ color: 'var(--ink-muted)' }}
+            style={{ color: mutedColor }}
             title={detailTags.join(' · ')}
           >
             {detailTags.length > 0
@@ -156,26 +171,33 @@ export function WeatherWidget({
                 : ''}
           </div>
         </div>
-      </MotionCard>
+      </WidgetSurface>
     );
   }
 
   return (
-    <MotionCard
+    <WidgetSurface
+      cardless={cardless}
+      managed={managed}
       enableTilt={enableTilt}
-      disabled={layoutEditing}
+      layoutEditing={layoutEditing}
       onClick={() => {
         if (!layoutEditing && !readOnly) onOpenSettings();
       }}
-      className={`rounded-2xl p-4 min-h-[108px] flex flex-col justify-center ${
+      cardClassName={`rounded-2xl p-4 min-h-[108px] flex flex-col justify-center ${
+        readOnly ? 'cursor-default' : 'cursor-pointer'
+      }`}
+      plainClassName={`px-2 py-2 flex flex-col justify-center ${
         readOnly ? 'cursor-default' : 'cursor-pointer'
       }`}
     >
       <div className="flex items-center justify-between gap-2.5 flex-nowrap">
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center weather-float shrink-0"
-            style={{ background: 'var(--pill-bg)' }}
+            className={`w-10 h-10 rounded-xl flex items-center justify-center weather-float shrink-0 ${
+              cardless ? '' : ''
+            }`}
+            style={cardless ? undefined : { background: 'var(--pill-bg)' }}
           >
             {iconEl}
           </div>
@@ -184,20 +206,20 @@ export function WeatherWidget({
               <span className="text-2xl font-semibold tabular-nums shrink-0">
                 {weather ? `${formatTempVal(weather.temp_c, unit)}°` : '--°'}
               </span>
-              <span className="text-xs truncate" style={{ color: 'var(--ink-muted)' }}>
+              <span className="text-xs truncate" style={{ color: mutedColor }}>
                 {weather ? `${weather.cond} · ${cityDisplay}` : '加载中'}
               </span>
             </div>
             <div
               className="text-xs truncate mt-0.5"
-              style={{ color: 'var(--ink-muted)' }}
+              style={{ color: mutedColor }}
               title={detailTags.join(' · ')}
             >
               {weather
                 ? detailTags.length > 0
                   ? detailTags.slice(0, 3).join(' · ')
                   : cityDisplay
-                : '点击设置精确地区与字段'}
+                : '点击设置地区'}
             </div>
           </div>
         </div>
@@ -208,15 +230,15 @@ export function WeatherWidget({
               <div
                 key={idx}
                 className="px-2 py-1 rounded-xl text-center min-w-[38px]"
-                style={{ background: 'var(--pill-bg)' }}
+                style={cardless ? undefined : { background: 'var(--pill-bg)' }}
               >
-                <div style={{ color: 'var(--ink-muted)' }}>{slot.label}</div>
+                <div style={{ color: mutedColor }}>{slot.label}</div>
                 <div className="font-mono font-medium">{slot.temp}</div>
               </div>
             ))}
           </div>
         )}
       </div>
-    </MotionCard>
+    </WidgetSurface>
   );
 }

@@ -19,6 +19,10 @@ import {
 } from 'lucide-react';
 
 export { MotionCard } from './components/MotionCard';
+export { WidgetSurface } from './components/WidgetSurface';
+export { CenteredModal } from './components/CenteredModal';
+export { OrbitSelect, type OrbitSelectOption } from './components/OrbitSelect';
+export { BrandIconSvg, isBrandIconValue, resolveDefaultBrandIcon } from './components/BrandIcons';
 export { RangeField } from './components/RangeField';
 export { IconPicker } from './components/IconPicker';
 export {

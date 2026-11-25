@@ -86,8 +86,13 @@ func (p *Plugin) Manifest() plugin.Manifest {
 		Version:        "1.0.0",
 		Description:    "宿主机 CPU、内存、Swap、多盘挂载点、温度与网络吞吐实时遥测",
 		Icon:           "cpu",
-		Tier:           "builtin",
+		Tier:           "core",
+		Source:         "official",
 		DefaultEnabled: true,
+		Style: &plugin.StyleSpec{
+			Managed:          true,
+			SupportsCardless: true,
+		},
 		Access: plugin.AccessSpec{
 			MinRole: "user",
 			Guest:   plugin.GuestSpec{Mode: "hidden"},

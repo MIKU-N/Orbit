@@ -49,18 +49,24 @@ func DetectZone(r *http.Request, cfg *config.Config) (string, string) {
 }
 
 // MaxUploadBytes returns the maximum allowed file upload size in bytes for a zone.
+// A return value of 0 means unlimited.
 func MaxUploadBytes(zone string, cfg *config.Config) int64 {
 	if cfg == nil {
 		return 100 << 20
 	}
+	var mb int64
 	switch zone {
 	case ZoneLAN:
-		return cfg.LANMaxMB << 20
+		mb = cfg.LANMaxMB
 	case ZoneTailscale:
-		return cfg.TSMaxMB << 20
+		mb = cfg.TSMaxMB
 	default:
-		return cfg.WANMaxMB << 20
+		mb = cfg.WANMaxMB
 	}
+	if mb <= 0 {
+		return 0
+	}
+	return mb << 20
 }
 
 func extractClientIP(r *http.Request, trustProxy bool) string {

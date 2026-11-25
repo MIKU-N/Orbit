@@ -30,8 +30,13 @@ func (p *Plugin) Manifest() plugin.Manifest {
 		Version:        "1.0.0",
 		Description:    "多设备实时云剪贴板同步，支持 Ctrl+V 直接上传截图、置顶与取件码分享",
 		Icon:           "clipboard",
-		Tier:           "builtin",
+		Tier:           "core",
+		Source:         "official",
 		DefaultEnabled: true,
+		Style: &plugin.StyleSpec{
+			Managed:          true,
+			SupportsCardless: false,
+		},
 		Access: plugin.AccessSpec{
 			MinRole: "user",
 			Guest: plugin.GuestSpec{
@@ -167,18 +172,53 @@ func (p *Plugin) handleListClips(w http.ResponseWriter, r *http.Request) {
 	plugin.WriteJSON(w, http.StatusOK, map[string]any{"clips": clips})
 }
 
+func (p *Plugin) notifyClipCreated(userID int64, clip db.Clip, senderPeerID, targetPeerID string) {
+	if targetPeerID != "" {
+		// Notify ONLY the target client
+		p.host.Hub().SendToPeer(userID, targetPeerID, "clip_updated", map[string]any{
+			"action":         "created",
+			"id":             clip.ID,
+			"clip":           clip,
+			"notify":         true,
+			"sender_peer_id": senderPeerID,
+			"target_peer_id": targetPeerID,
+		})
+		// Silently sync other clients (excluding sender and target) without popping notifications
+		p.host.Hub().BroadcastUserExcept(userID, []string{targetPeerID, senderPeerID}, "clip_updated", map[string]any{
+			"action":         "synced",
+			"id":             clip.ID,
+			"notify":         false,
+			"sender_peer_id": senderPeerID,
+			"target_peer_id": targetPeerID,
+		})
+		return
+	}
+	// Default: broadcast to all OTHER connected clients of this user (never notify the sender itself)
+	p.host.Hub().BroadcastUserExcept(userID, []string{senderPeerID}, "clip_updated", map[string]any{
+		"action":         "created",
+		"id":             clip.ID,
+		"clip":           clip,
+		"notify":         true,
+		"sender_peer_id": senderPeerID,
+	})
+}
+
 func (p *Plugin) handleCreateClip(w http.ResponseWriter, r *http.Request) {
 	u := p.host.Auth().CurrentUser(r)
 	var req struct {
-		Kind     string `json:"kind"`
-		Content  string `json:"content"`
-		Device   string `json:"device"`
-		TTLHours int    `json:"ttl_hours"`
+		Kind         string `json:"kind"`
+		Content      string `json:"content"`
+		Device       string `json:"device"`
+		TTLHours     int    `json:"ttl_hours"`
+		TargetPeerID string `json:"target_peer_id"`
+		SenderPeerID string `json:"sender_peer_id"`
 	}
 	if err := plugin.DecodeJSON(r, &req); err != nil {
 		plugin.WriteErr(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	senderPeerID := plugin.FirstNonEmpty(r.Header.Get("X-Orbit-Peer-Id"), req.SenderPeerID)
+	targetPeerID := plugin.FirstNonEmpty(req.TargetPeerID, r.Header.Get("X-Orbit-Target-Peer-Id"))
 	req.Content = strings.TrimSpace(req.Content)
 	if req.Content == "" {
 		plugin.WriteErr(w, http.StatusBadRequest, "content required")
@@ -222,11 +262,7 @@ func (p *Plugin) handleCreateClip(w http.ResponseWriter, r *http.Request) {
 		ID: id, UserID: u.ID, Kind: kind, Content: req.Content,
 		Device: device, ExpiresAt: exp, CreatedAt: now,
 	}
-	p.host.Hub().BroadcastUser(u.ID, "clip_updated", map[string]any{
-		"action": "created",
-		"id":     id,
-		"clip":   clip,
-	})
+	p.notifyClipCreated(u.ID, clip, senderPeerID, targetPeerID)
 	plugin.WriteJSON(w, http.StatusCreated, map[string]any{"clip": clip})
 }
 
@@ -320,11 +356,9 @@ func (p *Plugin) handleUploadClipImage(w http.ResponseWriter, r *http.Request) {
 		ID: id, UserID: u.ID, Kind: "image", Content: content,
 		ImagePath: imgURL, Device: device, ExpiresAt: &exp, CreatedAt: now,
 	}
-	p.host.Hub().BroadcastUser(u.ID, "clip_updated", map[string]any{
-		"action": "created",
-		"id":     id,
-		"clip":   clip,
-	})
+	senderPeerID := plugin.FirstNonEmpty(r.Header.Get("X-Orbit-Peer-Id"), r.FormValue("sender_peer_id"))
+	targetPeerID := plugin.FirstNonEmpty(r.FormValue("target_peer_id"), r.Header.Get("X-Orbit-Target-Peer-Id"))
+	p.notifyClipCreated(u.ID, clip, senderPeerID, targetPeerID)
 	plugin.WriteJSON(w, http.StatusCreated, map[string]any{"clip": clip})
 }
 

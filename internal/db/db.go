@@ -12,23 +12,29 @@ import (
 
 const DefaultSettingsJSON = `{
   "glassTheme": "dark",
-  "glassBlur": 55,
+  "themeMode": "dark",
+  "glassBlur": 0,
   "glassBlurMode": "pct",
-  "glassAlpha": 32,
-  "glassRadius": 16,
-  "bgDim": 22,
+  "glassAlpha": 40,
+  "glassRadius": 10,
+  "bgDim": 0,
   "fontConfig": {
-    "activeId": "noto-sans",
+    "activeId": "system",
     "customFonts": []
   },
-  "wallpaperMode": "bing",
+  "resourceCdn": {
+    "mode": "local",
+    "customUrl": ""
+  },
+  "wallpaperMode": "preset",
   "wallpaperPreset": 0,
   "wallpaperCustom": "",
   "localWallpapers": [],
   "localWallpaperRotate": false,
   "localWallpaperIntervalMin": 15,
-  "bingAuto": true,
+  "bingAuto": false,
   "enableTilt": true,
+  "enableAnimations": true,
   "showSeconds": false,
   "dockStyle": "card",
   "searchIconOnly": false,
@@ -88,14 +94,17 @@ const DefaultSettingsJSON = `{
     "hitokoto": true,
     "bookmarks": true
   },
+  "cardlessItems": {
+    "clock": true
+  },
   "hasCustomLayout": false,
   "layout": null,
   "engines": [
-    { "id": "google", "name": "Google", "key": "g", "url": "https://www.google.com/search?q={q}", "color": "#60a5fa", "icon": "" },
-    { "id": "bing", "name": "Bing", "key": "b", "url": "https://www.bing.com/search?q={q}", "color": "#38bdf8", "icon": "" },
-    { "id": "github", "name": "GitHub", "key": "gh", "url": "https://github.com/search?q={q}", "color": "#e2e8f0", "icon": "" },
-    { "id": "bilibili", "name": "Bilibili", "key": "bl", "url": "https://search.bilibili.com/all?keyword={q}", "color": "#f472b6", "icon": "" },
-    { "id": "local", "name": "站内", "key": "s", "url": "", "color": "#a78bfa", "icon": "" }
+    { "id": "google", "name": "Google", "key": "g", "url": "https://www.google.com/search?q={q}", "color": "#4285f4", "icon": "brand:google" },
+    { "id": "bing", "name": "Bing", "key": "b", "url": "https://www.bing.com/search?q={q}", "color": "#00a4ef", "icon": "brand:bing" },
+    { "id": "github", "name": "GitHub", "key": "gh", "url": "https://github.com/search?q={q}", "color": "#24292f", "icon": "brand:github" },
+    { "id": "bilibili", "name": "Bilibili", "key": "bl", "url": "https://search.bilibili.com/all?keyword={q}", "color": "#fb7299", "icon": "brand:bilibili" },
+    { "id": "local", "name": "站内", "key": "s", "url": "", "color": "#818cf8", "icon": "brand:local" }
   ],
   "activeEngineId": "google"
 }`
@@ -235,6 +244,8 @@ CREATE INDEX IF NOT EXISTS idx_shares_exp ON shares(expires_at);
 		`ALTER TABLE users ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE users ADD COLUMN share_scopes TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE plugin_states ADD COLUMN visibility_json TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE plugin_states ADD COLUMN style_json TEXT NOT NULL DEFAULT '{}'`,
 	}
 	for _, stmt := range alterCols {
 		if _, err := conn.Exec(stmt); err != nil {

@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// Version is the current Orbit release version (overridable via -ldflags).
+var Version = "0.2.0"
+
 // Config holds runtime configuration for Orbit.
 type Config struct {
 	Addr         string
@@ -80,10 +83,10 @@ func Load() (*Config, error) {
 	return &Config{
 		Addr:         addr,
 		DataDir:      dataDir,
-		LANMaxMB:     envInt64("ORBIT_LAN_MAX_MB", 10240),
-		TSMaxMB:      envInt64("ORBIT_TS_MAX_MB", 2048),
-		WANMaxMB:     envInt64("ORBIT_WAN_MAX_MB", 100),
-		MaxStorageMB: envInt64("ORBIT_MAX_STORAGE_MB", 20480),
+		LANMaxMB:     envLimitMB("ORBIT_LAN_MAX_MB", 0),
+		TSMaxMB:      envLimitMB("ORBIT_TS_MAX_MB", 2048),
+		WANMaxMB:     envLimitMB("ORBIT_WAN_MAX_MB", 100),
+		MaxStorageMB: envLimitMB("ORBIT_MAX_STORAGE_MB", 20480),
 		TrustProxy:   envBool("ORBIT_TRUST_PROXY", true),
 		WANHosts:     wanHosts,
 		JWTSecret:    secret,
@@ -114,14 +117,21 @@ func loadOrCreateSecret(dataDir, envSecret string) ([]byte, error) {
 	return []byte(hexSecret), nil
 }
 
-func envInt64(key string, def int64) int64 {
-	v := strings.TrimSpace(os.Getenv(key))
+// envLimitMB parses a size limit in MB where 0 / negative / "unlimited" explicitly disables the limit.
+func envLimitMB(key string, def int64) int64 {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	if v == "" {
 		return def
 	}
+	if v == "0" || v == "unlimited" || v == "none" || v == "off" || v == "false" {
+		return 0
+	}
 	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n <= 0 {
+	if err != nil {
 		return def
+	}
+	if n <= 0 {
+		return 0
 	}
 	return n
 }

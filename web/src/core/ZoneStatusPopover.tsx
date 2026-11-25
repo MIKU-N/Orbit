@@ -57,16 +57,12 @@ export function ZoneStatusPopover({ open, onClose }: ZoneStatusPopoverProps) {
       : detectedZone === 'tailscale'
         ? limits.ts_mb
         : limits.wan_mb);
+  const shownRouteLimitMB = zone === detectedZone ? detectedLimitMB : activeZoneLimitMB;
 
-  const zones: { id: NetworkZone; label: string; icon: React.ReactNode; limitMB: number }[] = [
-    { id: 'lan', label: '局域网', icon: <Home className="w-3.5 h-3.5" />, limitMB: limits.lan_mb },
-    {
-      id: 'tailscale',
-      label: 'Tailscale',
-      icon: <TailscaleMiniIcon />,
-      limitMB: limits.ts_mb,
-    },
-    { id: 'wan', label: '外网', icon: <Globe className="w-3.5 h-3.5" />, limitMB: limits.wan_mb },
+  const zones: { id: NetworkZone; label: string; icon: React.ReactNode }[] = [
+    { id: 'lan', label: '局域网', icon: <Home className="w-3.5 h-3.5" /> },
+    { id: 'tailscale', label: 'Tailscale', icon: <TailscaleMiniIcon /> },
+    { id: 'wan', label: '外网', icon: <Globe className="w-3.5 h-3.5" /> },
   ];
 
   return (
@@ -75,11 +71,14 @@ export function ZoneStatusPopover({ open, onClose }: ZoneStatusPopoverProps) {
       onClick={(e) => e.stopPropagation()}
       className="fixed top-16 left-4 sm:left-6 z-40 w-72 max-w-[calc(100vw-2rem)] glass-strong rounded-2xl p-3 space-y-3 pop-in text-xs"
     >
-      <div className="flex items-center justify-between gap-2 pb-2 border-b" style={{ borderColor: 'var(--glass-border)' }}>
+      <div
+        className="flex items-center justify-between gap-2 pb-2 border-b"
+        style={{ borderColor: 'var(--glass-border)' }}
+      >
         <div className="min-w-0">
-          <div className="font-semibold text-sm">网络与连接状态</div>
+          <div className="font-semibold text-sm">网络状态</div>
           <div className="font-mono truncate mt-0.5" style={{ color: 'var(--ink-muted)' }}>
-            识别：{ZONE_LABELS[detectedZone]}
+            {ZONE_LABELS[detectedZone]}
             {clientIp ? ` · ${clientIp}` : ''}
           </div>
         </div>
@@ -97,9 +96,9 @@ export function ZoneStatusPopover({ open, onClose }: ZoneStatusPopoverProps) {
 
       <div className="space-y-1.5">
         <div className="flex items-center justify-between" style={{ color: 'var(--ink-muted)' }}>
-          <span>书签路由视图</span>
+          <span>路由视图</span>
           <span className="font-mono">
-            {zone === detectedZone ? `单文件 ≤ ${formatLimitMB(detectedLimitMB)}` : `视图限额 ${formatLimitMB(activeZoneLimitMB)}`}
+            {shownRouteLimitMB > 0 ? `≤ ${formatLimitMB(shownRouteLimitMB)}` : '不限'}
           </span>
         </div>
         <div className="grid grid-cols-3 gap-1 p-1 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
@@ -126,20 +125,26 @@ export function ZoneStatusPopover({ open, onClose }: ZoneStatusPopoverProps) {
 
       <div className="space-y-1.5 pt-1 border-t" style={{ borderColor: 'var(--glass-border)' }}>
         <div className="flex items-center justify-between" style={{ color: 'var(--ink-muted)' }}>
-          <span>当前实际上传上限</span>
+          <span>单文件上限</span>
           <span className="font-mono font-medium" style={{ color: 'var(--ink)' }}>
-            {ZONE_LABELS[detectedZone]} ≤ {formatLimitMB(detectedLimitMB)}
+            {formatLimitMB(detectedLimitMB)}
           </span>
         </div>
         <div className="flex items-center justify-between" style={{ color: 'var(--ink-muted)' }}>
-          <span>在线 P2P 设备</span>
-          <span className="font-mono" style={{ color: peers.length > 0 ? 'var(--ok)' : 'var(--ink-muted)' }}>
-            {peers.length > 0 ? `${peers.length} 台在线` : '暂无其他设备'}
+          <span>在线设备</span>
+          <span
+            className="font-mono"
+            style={{ color: peers.length > 0 ? 'var(--ok)' : 'var(--ink-muted)' }}
+          >
+            {peers.length > 0 ? `${peers.length} 台` : '无其他设备'}
           </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-1.5 pt-1 border-t" style={{ borderColor: 'var(--glass-border)' }}>
+      <div
+        className="grid grid-cols-2 gap-1.5 pt-1 border-t"
+        style={{ borderColor: 'var(--glass-border)' }}
+      >
         {isPluginEnabled('orbit.clipboard') && (
           <button
             type="button"
@@ -147,7 +152,7 @@ export function ZoneStatusPopover({ open, onClose }: ZoneStatusPopoverProps) {
               onClose();
               openDrawer('clipboard');
             }}
-            className="p-2 rounded-xl text-left hover:bg-white/10 cursor-pointer transition-colors"
+            className="p-2 rounded-xl text-left orbit-hover cursor-pointer transition-colors"
             style={{ background: 'var(--pill-bg)' }}
           >
             <div className="flex items-center gap-1.5 font-medium">
@@ -155,7 +160,7 @@ export function ZoneStatusPopover({ open, onClose }: ZoneStatusPopoverProps) {
               <span>剪贴板</span>
             </div>
             <div className="font-mono mt-0.5" style={{ color: 'var(--ink-muted)' }}>
-              {clips.length} 条记录
+              {clips.length} 条
             </div>
           </button>
         )}
@@ -167,15 +172,15 @@ export function ZoneStatusPopover({ open, onClose }: ZoneStatusPopoverProps) {
               onClose();
               openDrawer('files');
             }}
-            className="p-2 rounded-xl text-left hover:bg-white/10 cursor-pointer transition-colors"
+            className="p-2 rounded-xl text-left orbit-hover cursor-pointer transition-colors"
             style={{ background: 'var(--pill-bg)' }}
           >
             <div className="flex items-center gap-1.5 font-medium">
               <UploadCloud className="w-3.5 h-3.5 opacity-80" />
-              <span>文件快传</span>
+              <span>快传</span>
             </div>
             <div className="font-mono mt-0.5 truncate" style={{ color: 'var(--ink-muted)' }}>
-              {filesData ? `${filesData.files.length} 个 · ${formatBytes(filesData.storage_used)}` : '查看暂存箱'}
+              {filesData ? `${filesData.files.length} 个 · ${formatBytes(filesData.storage_used)}` : '暂存箱'}
             </div>
           </button>
         )}

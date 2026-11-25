@@ -1,9 +1,10 @@
 import type { MonitorConfig, MonitorMetricKey, SystemMetrics } from '../../types';
-import { MotionCard, formatBytes, formatSpeed } from '../../sdk/primitives';
+import { WidgetSurface, formatBytes, formatSpeed } from '../../sdk/primitives';
 
 interface MonitorWidgetProps {
   metrics: SystemMetrics | null;
   config: MonitorConfig;
+  cardless?: boolean;
   enableTilt: boolean;
   layoutEditing: boolean;
   onOpenDetail: () => void;
@@ -21,6 +22,7 @@ function formatCompactUptime(sec: number): string {
 export function MonitorWidget({
   metrics,
   config,
+  cardless = false,
   enableTilt,
   layoutEditing,
   onOpenDetail,
@@ -42,6 +44,10 @@ export function MonitorWidget({
   const gridClass =
     cols === 2 ? 'grid-cols-2' : cols === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3';
 
+  const tileStyle = cardless ? undefined : { background: 'var(--pill-bg)' };
+  const mutedStyle = { color: cardless ? 'var(--hero-ink-muted)' : 'var(--ink-muted)' };
+  const trackStyle = { background: cardless ? 'rgba(255,255,255,0.24)' : 'var(--track-bg)' };
+
   const renderTile = (key: MonitorMetricKey) => {
     switch (key) {
       case 'cpu':
@@ -49,10 +55,10 @@ export function MonitorWidget({
           <div
             key={key}
             className="px-2.5 py-1.5 rounded-xl flex items-center justify-between gap-1.5"
-            style={{ background: 'var(--pill-bg)' }}
+            style={tileStyle}
           >
             <div className="min-w-0">
-              <div style={{ color: 'var(--ink-muted)' }}>CPU</div>
+              <div style={mutedStyle}>CPU</div>
               <div className="font-mono font-semibold">{Math.round(metrics?.cpu_percent || 0)}%</div>
             </div>
             {config.showSparkline && (
@@ -73,12 +79,12 @@ export function MonitorWidget({
 
       case 'ram':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl space-y-1.5" style={{ background: 'var(--pill-bg)' }}>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl space-y-1.5" style={tileStyle}>
             <div className="flex justify-between gap-1">
-              <span style={{ color: 'var(--ink-muted)' }}>内存</span>
+              <span style={mutedStyle}>内存</span>
               <span className="font-mono font-semibold">{Math.round(metrics?.ram_percent || 0)}%</span>
             </div>
-            <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}>
+            <div className="h-1 rounded-full overflow-hidden" style={trackStyle}>
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
@@ -92,14 +98,14 @@ export function MonitorWidget({
 
       case 'disk':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl space-y-1.5" style={{ background: 'var(--pill-bg)' }}>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl space-y-1.5" style={tileStyle}>
             <div className="flex justify-between gap-1">
-              <span className="truncate" style={{ color: 'var(--ink-muted)' }}>
+              <span className="truncate" style={mutedStyle}>
                 {metrics?.disk_mount && metrics.disk_mount !== '/' ? metrics.disk_mount : '存储'}
               </span>
               <span className="font-mono font-semibold shrink-0">{Math.round(metrics?.disk_percent || 0)}%</span>
             </div>
-            <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}>
+            <div className="h-1 rounded-full overflow-hidden" style={trackStyle}>
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
@@ -113,14 +119,14 @@ export function MonitorWidget({
 
       case 'swap':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl space-y-1.5" style={{ background: 'var(--pill-bg)' }}>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl space-y-1.5" style={tileStyle}>
             <div className="flex justify-between gap-1">
-              <span style={{ color: 'var(--ink-muted)' }}>Swap</span>
+              <span style={mutedStyle}>Swap</span>
               <span className="font-mono font-semibold">
                 {metrics && metrics.swap_total_bytes > 0 ? `${Math.round(metrics.swap_percent)}%` : '—'}
               </span>
             </div>
-            <div className="h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.12)' }}>
+            <div className="h-1 rounded-full overflow-hidden" style={trackStyle}>
               <div
                 className="h-full rounded-full transition-all duration-500"
                 style={{
@@ -134,16 +140,16 @@ export function MonitorWidget({
 
       case 'load':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-            <div style={{ color: 'var(--ink-muted)' }}>负载</div>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={tileStyle}>
+            <div style={mutedStyle}>负载</div>
             <div className="font-mono font-semibold">{(metrics?.load1 || 0).toFixed(2)}</div>
           </div>
         );
 
       case 'uptime':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-            <div style={{ color: 'var(--ink-muted)' }}>运行</div>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={tileStyle}>
+            <div style={mutedStyle}>运行</div>
             <div className="font-mono font-semibold truncate">
               {metrics ? formatCompactUptime(metrics.uptime_seconds) : '—'}
             </div>
@@ -152,8 +158,8 @@ export function MonitorWidget({
 
       case 'temp':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-            <div style={{ color: 'var(--ink-muted)' }}>温度</div>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={tileStyle}>
+            <div style={mutedStyle}>温度</div>
             <div className="font-mono font-semibold">
               {metrics?.cpu_temp_c != null ? `${metrics.cpu_temp_c}°C` : 'N/A'}
             </div>
@@ -162,24 +168,24 @@ export function MonitorWidget({
 
       case 'processes':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-            <div style={{ color: 'var(--ink-muted)' }}>进程</div>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={tileStyle}>
+            <div style={mutedStyle}>进程</div>
             <div className="font-mono font-semibold">{metrics?.processes || 0}</div>
           </div>
         );
 
       case 'orbit':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-            <div style={{ color: 'var(--ink-muted)' }}>Orbit</div>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={tileStyle}>
+            <div style={mutedStyle}>Orbit</div>
             <div className="font-mono font-semibold">{metrics?.orbit_alloc_mb || 0}M</div>
           </div>
         );
 
       case 'net_total':
         return (
-          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-            <div style={{ color: 'var(--ink-muted)' }}>总下行</div>
+          <div key={key} className="px-2.5 py-1.5 rounded-xl" style={tileStyle}>
+            <div style={mutedStyle}>总下行</div>
             <div className="font-mono font-semibold truncate">
               {formatBytes(metrics?.net_rx_total_bytes || 0)}
             </div>
@@ -189,13 +195,15 @@ export function MonitorWidget({
   };
 
   return (
-    <MotionCard
+    <WidgetSurface
+      cardless={cardless}
       enableTilt={enableTilt}
-      disabled={layoutEditing}
+      layoutEditing={layoutEditing}
       onClick={() => {
         if (!layoutEditing) onOpenDetail();
       }}
-      className="rounded-2xl p-4 space-y-2.5 cursor-pointer min-h-[108px] flex flex-col justify-center"
+      cardClassName="rounded-2xl p-4 space-y-2.5 cursor-pointer min-h-[108px] flex flex-col justify-center"
+      plainClassName="px-2 py-2 space-y-2 cursor-pointer flex flex-col justify-center"
     >
       <div className="flex items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-2 min-w-0">
@@ -204,14 +212,17 @@ export function MonitorWidget({
           {config.showLanIP && (metrics?.lan_ip || metrics?.tailscale_ip) && (
             <span
               className="font-mono px-1.5 py-0.5 rounded-md truncate hidden sm:inline"
-              style={{ background: 'var(--pill-bg)', color: 'var(--ink-muted)' }}
+              style={{
+                background: cardless ? 'rgba(255,255,255,0.14)' : 'var(--pill-bg)',
+                color: cardless ? 'var(--hero-ink-muted)' : 'var(--ink-muted)',
+              }}
             >
               {metrics.lan_ip || metrics.tailscale_ip}
             </span>
           )}
         </div>
         {config.showNetSpeed && (
-          <div className="flex items-center gap-2.5 font-mono shrink-0" style={{ color: 'var(--ink-muted)' }}>
+          <div className="flex items-center gap-2.5 font-mono shrink-0" style={mutedStyle}>
             <span>↑ {formatSpeed(metrics?.net_up_bps || 0)}</span>
             <span>↓ {formatSpeed(metrics?.net_down_bps || 0)}</span>
           </div>
@@ -221,6 +232,6 @@ export function MonitorWidget({
       <div className={`grid ${gridClass} gap-2 items-center text-xs`}>
         {metricList.map((m) => renderTile(m))}
       </div>
-    </MotionCard>
+    </WidgetSurface>
   );
 }

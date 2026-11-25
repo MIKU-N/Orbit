@@ -33,13 +33,15 @@ export interface OrbitNotification {
 
 interface NotificationStackProps {
   items: OrbitNotification[];
+  offsetTop?: boolean;
   onDismiss: (id: string) => void;
-  onCopy: (text: string, label?: string) => void;
+  onCopy: (text: string, label?: string) => Promise<boolean> | void;
   onOpenDrawer: (drawerId: string) => void;
 }
 
 export function NotificationStack({
   items,
+  offsetTop = false,
   onDismiss,
   onCopy,
   onOpenDrawer,
@@ -47,7 +49,12 @@ export function NotificationStack({
   if (items.length === 0) return null;
 
   return (
-    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center gap-2 pointer-events-none w-full max-w-sm px-4">
+    <div
+      id="notificationStack"
+      className={`fixed ${
+        offsetTop ? 'top-16' : 'top-4'
+      } left-1/2 -translate-x-1/2 z-[70] flex flex-col items-center gap-2 pointer-events-none w-full max-w-sm px-4 transition-[top] duration-200`}
+    >
       {items.map((item) => {
         if (item.kind === 'toast') {
           return (
@@ -75,7 +82,10 @@ export function NotificationStack({
           return (
             <div
               key={item.id}
-              onClick={() => item.drawerTarget && onOpenDrawer(item.drawerTarget)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (item.drawerTarget) onOpenDrawer(item.drawerTarget);
+              }}
               className="pointer-events-auto w-full glass-strong rounded-2xl p-3 space-y-2 text-xs toast-slide-down shadow-xl cursor-pointer hover:border-[var(--glass-border-hover)]"
             >
               <div className="flex items-center justify-between gap-2">
@@ -93,29 +103,45 @@ export function NotificationStack({
                     </div>
                   </div>
                 </div>
-                <div className="text-right font-mono shrink-0">
-                  <div className="font-semibold" style={{ color: 'var(--ok)' }}>
-                    {p.speedBps > 0 ? formatSpeed(p.speedBps) : `${p.percent}%`}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="text-right font-mono">
+                    <div className="font-semibold" style={{ color: 'var(--ok)' }}>
+                      {p.speedBps > 0 ? formatSpeed(p.speedBps) : `${p.percent}%`}
+                    </div>
+                    <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                      {p.percent}%
+                    </div>
                   </div>
-                  <div className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                    {p.percent}%
-                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDismiss(item.id);
+                    }}
+                    className="p-1 rounded-lg opacity-65 hover:opacity-100 cursor-pointer shrink-0"
+                    title="收起通知"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
-              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--pill-hover)' }}>
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--track-bg)' }}>
                 <div
                   className="h-full transition-all duration-150"
                   style={{ width: `${p.percent}%`, background: 'var(--brand-solid)' }}
                 />
               </div>
-              {p.totalBytes > 0 && (
-                <div className="flex items-center justify-between font-mono text-[11px]" style={{ color: 'var(--ink-muted)' }}>
-                  <span>
-                    {formatBytes(p.transferredBytes)} / {formatBytes(p.totalBytes)}
-                  </span>
-                  <span>点击查看详情</span>
-                </div>
-              )}
+              <div
+                className="flex items-center justify-between font-mono text-[11px]"
+                style={{ color: 'var(--ink-muted)' }}
+              >
+                <span>
+                  {p.totalBytes > 0
+                    ? `${formatBytes(p.transferredBytes)} / ${formatBytes(p.totalBytes)}`
+                    : '传输中...'}
+                </span>
+                <span style={{ color: 'var(--brand)' }}>点击查看</span>
+              </div>
             </div>
           );
         }
@@ -132,14 +158,21 @@ export function NotificationStack({
                   className="w-7 h-7 rounded-xl flex items-center justify-center shrink-0"
                   style={{ background: 'var(--pill-hover)', color: 'var(--brand)' }}
                 >
-                  {isClip ? <Clipboard className="w-3.5 h-3.5" /> : <UploadCloud className="w-3.5 h-3.5" />}
+                  {isClip ? (
+                    <Clipboard className="w-3.5 h-3.5" />
+                  ) : (
+                    <UploadCloud className="w-3.5 h-3.5" />
+                  )}
                 </span>
                 <div className="min-w-0">
                   <div className="font-semibold truncate">
                     {item.title || (isClip ? '收到新剪贴板' : '收到新文件')}
                   </div>
                   {item.meta && (
-                    <div className="font-mono text-[11px] truncate" style={{ color: 'var(--ink-muted)' }}>
+                    <div
+                      className="font-mono text-[11px] truncate"
+                      style={{ color: 'var(--ink-muted)' }}
+                    >
                       {item.meta}
                     </div>
                   )}
@@ -160,7 +193,8 @@ export function NotificationStack({
                 <img
                   src={item.imageUrl}
                   alt={item.msg}
-                  className="w-11 h-11 rounded-lg object-cover bg-black/25 shrink-0"
+                  className="w-11 h-11 rounded-lg object-cover shrink-0"
+                  style={{ background: 'var(--code-bg)' }}
                 />
                 <div className="truncate" style={{ color: 'var(--ink-muted)' }}>
                   {item.msg}
@@ -169,7 +203,7 @@ export function NotificationStack({
             ) : (
               <div
                 className="px-2.5 py-1.5 rounded-xl line-clamp-2 break-words"
-                style={{ background: 'var(--pill-bg)', color: 'var(--ink)' }}
+                style={{ background: 'var(--code-bg)', color: 'var(--ink)' }}
               >
                 {item.msg}
               </div>
@@ -179,8 +213,8 @@ export function NotificationStack({
               {item.copyValue && (
                 <button
                   type="button"
-                  onClick={() => {
-                    onCopy(item.copyValue!, '已复制剪贴板内容');
+                  onClick={async () => {
+                    await onCopy(item.copyValue!, '已复制');
                     onDismiss(item.id);
                   }}
                   className="px-2.5 py-1 rounded-lg flex items-center gap-1 cursor-pointer font-medium text-white"
@@ -204,7 +238,8 @@ export function NotificationStack({
               {item.drawerTarget && (
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     onOpenDrawer(item.drawerTarget!);
                     onDismiss(item.id);
                   }}

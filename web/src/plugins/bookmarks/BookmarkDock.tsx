@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, CheckSquare, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import type { Bookmark, BookmarkGroup, NetworkZone } from '../../types';
-import { AppIcon, MotionCard, getBookmarkActiveUrl } from '../../sdk/primitives';
+import { AppIcon, WidgetSurface, getBookmarkActiveUrl } from '../../sdk/primitives';
 
 interface BookmarkDockProps {
   groups: BookmarkGroup[];
@@ -10,6 +10,7 @@ interface BookmarkDockProps {
   onSelectGroup: (id: number | 'all') => void;
   dockStyle: 'card' | 'icon';
   onChangeDockStyle: (style: 'card' | 'icon') => void;
+  cardless?: boolean;
   zone: NetworkZone;
   enableTilt: boolean;
   layoutEditing: boolean;
@@ -27,6 +28,7 @@ export function BookmarkDock({
   onSelectGroup,
   dockStyle,
   onChangeDockStyle,
+  cardless = false,
   zone,
   enableTilt,
   layoutEditing,
@@ -141,14 +143,28 @@ export function BookmarkDock({
   return (
     <div className="space-y-2.5">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="glass rounded-full p-1 flex items-center gap-0.5 text-xs flex-wrap">
+        <div
+          className={`${cardless ? 'hero-shadow' : 'glass'} rounded-full p-1 flex items-center gap-0.5 text-xs flex-wrap`}
+        >
           <button
             type="button"
             onClick={() => onSelectGroup('all')}
             className="px-3 py-1 rounded-full cursor-pointer transition-colors"
             style={{
-              background: activeGroupId === 'all' ? 'var(--pill-hover)' : 'transparent',
-              color: activeGroupId === 'all' ? 'var(--ink)' : 'var(--ink-muted)',
+              background:
+                activeGroupId === 'all'
+                  ? cardless
+                    ? 'rgba(255,255,255,0.2)'
+                    : 'var(--pill-hover)'
+                  : 'transparent',
+              color:
+                activeGroupId === 'all'
+                  ? cardless
+                    ? 'var(--hero-ink)'
+                    : 'var(--ink)'
+                  : cardless
+                    ? 'var(--hero-ink-muted)'
+                    : 'var(--ink-muted)',
               fontWeight: activeGroupId === 'all' ? 500 : 400,
             }}
           >
@@ -161,8 +177,20 @@ export function BookmarkDock({
               onClick={() => onSelectGroup(g.id)}
               className="px-3 py-1 rounded-full cursor-pointer transition-colors"
               style={{
-                background: activeGroupId === g.id ? 'var(--pill-hover)' : 'transparent',
-                color: activeGroupId === g.id ? 'var(--ink)' : 'var(--ink-muted)',
+                background:
+                  activeGroupId === g.id
+                    ? cardless
+                      ? 'rgba(255,255,255,0.2)'
+                      : 'var(--pill-hover)'
+                    : 'transparent',
+                color:
+                  activeGroupId === g.id
+                    ? cardless
+                      ? 'var(--hero-ink)'
+                      : 'var(--ink)'
+                    : cardless
+                      ? 'var(--hero-ink-muted)'
+                      : 'var(--ink-muted)',
                 fontWeight: activeGroupId === g.id ? 500 : 400,
               }}
             >
@@ -171,13 +199,21 @@ export function BookmarkDock({
           ))}
         </div>
 
-        <div className="flex items-center gap-1.5 text-xs">
-          <div className="glass rounded-full p-0.5 flex items-center">
+        <div className={`flex items-center gap-1.5 text-xs ${cardless ? 'hero-shadow' : ''}`}>
+          <div className={`${cardless ? '' : 'glass'} rounded-full p-0.5 flex items-center`}>
             <button
               type="button"
               onClick={() => onChangeDockStyle('card')}
               className="px-2.5 py-1 rounded-full cursor-pointer"
-              style={{ background: dockStyle === 'card' ? 'var(--pill-hover)' : 'transparent' }}
+              style={{
+                background:
+                  dockStyle === 'card'
+                    ? cardless
+                      ? 'rgba(255,255,255,0.2)'
+                      : 'var(--pill-hover)'
+                    : 'transparent',
+                color: cardless ? 'var(--hero-ink)' : undefined,
+              }}
             >
               卡片
             </button>
@@ -185,7 +221,15 @@ export function BookmarkDock({
               type="button"
               onClick={() => onChangeDockStyle('icon')}
               className="px-2.5 py-1 rounded-full cursor-pointer"
-              style={{ background: dockStyle === 'icon' ? 'var(--pill-hover)' : 'transparent' }}
+              style={{
+                background:
+                  dockStyle === 'icon'
+                    ? cardless
+                      ? 'rgba(255,255,255,0.2)'
+                      : 'var(--pill-hover)'
+                    : 'transparent',
+                color: cardless ? 'var(--hero-ink)' : undefined,
+              }}
             >
               图标
             </button>
@@ -197,22 +241,23 @@ export function BookmarkDock({
                 if (selectMode) exitSelectMode();
                 else setSelectMode(true);
               }}
-              className="glass rounded-full h-8 px-2.5 flex items-center gap-1 hover:border-[var(--glass-border-hover)] cursor-pointer"
+              className={`${cardless ? '' : 'glass'} rounded-full h-8 px-2.5 flex items-center gap-1 hover:border-[var(--glass-border-hover)] cursor-pointer`}
               style={{
-                background: selectMode ? 'var(--brand-solid)' : undefined,
-                color: selectMode ? '#fff' : undefined,
+                background: selectMode ? 'var(--brand-solid)' : cardless ? 'rgba(255,255,255,0.14)' : undefined,
+                color: selectMode ? '#fff' : cardless ? 'var(--hero-ink)' : undefined,
               }}
-              title={selectMode ? '退出批量选择' : '批量选择 / 批量删除'}
+              title={selectMode ? '退出多选' : '批量管理'}
             >
               <CheckSquare className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{selectMode ? '退出多选' : '多选'}</span>
+              <span className="hidden sm:inline">{selectMode ? '退出' : '多选'}</span>
             </button>
           )}
           <button
             type="button"
             onClick={onAddBookmark}
-            className="glass rounded-full h-8 w-8 flex items-center justify-center hover:border-[var(--glass-border-hover)] cursor-pointer"
-            title="添加书签 / 导入"
+            className={`${cardless ? '' : 'glass'} rounded-full h-8 w-8 flex items-center justify-center hover:border-[var(--glass-border-hover)] cursor-pointer`}
+            style={cardless ? { background: 'rgba(255,255,255,0.14)', color: 'var(--hero-ink)' } : undefined}
+            title="添加书签"
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -289,10 +334,10 @@ export function BookmarkDock({
 
       {visibleList.length === 0 ? (
         <div
-          className="glass rounded-2xl px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs"
-          style={{ color: 'var(--ink-muted)' }}
+          className={`${cardless ? 'widget-plain px-2 py-4' : 'glass rounded-2xl px-4 py-6'} flex flex-col sm:flex-row items-center justify-between gap-3 text-xs`}
+          style={{ color: cardless ? 'var(--hero-ink-muted)' : 'var(--ink-muted)' }}
         >
-          <span>当前分组暂无书签，点击右侧按钮快速添加或导入书签</span>
+          <span>当前分组暂无书签</span>
           <button
             type="button"
             onClick={onAddBookmark}
@@ -300,7 +345,7 @@ export function BookmarkDock({
             style={{ background: 'var(--brand-solid)' }}
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>添加 / 导入书签</span>
+            <span>添加书签</span>
           </button>
         </div>
       ) : (
@@ -325,10 +370,11 @@ export function BookmarkDock({
 
             if (dockStyle === 'icon') {
               return (
-                <MotionCard
+                <WidgetSurface
                   key={bm.id}
+                  cardless={cardless}
                   enableTilt={enableTilt && !selectMode}
-                  disabled={layoutEditing}
+                  layoutEditing={layoutEditing}
                   draggable={canDrag}
                   onDragStart={(e) => {
                     if (!canDrag) {
@@ -363,7 +409,8 @@ export function BookmarkDock({
                     borderColor: isSelected || isOver ? 'var(--brand)' : undefined,
                     boxShadow: isSelected ? '0 0 0 1px var(--brand)' : undefined,
                   }}
-                  className="card-enter rounded-2xl p-3 flex flex-col items-center gap-2 cursor-pointer text-center group"
+                  cardClassName="card-enter rounded-2xl p-3 flex flex-col items-center gap-2 cursor-pointer text-center group"
+                  plainClassName="card-enter rounded-2xl p-2 flex flex-col items-center gap-1.5 cursor-pointer text-center group hover:scale-[1.04] transition-transform"
                 >
                   <AppIcon
                     icon={bm.icon}
@@ -401,21 +448,22 @@ export function BookmarkDock({
                         e.stopPropagation();
                         onEditBookmark(bm);
                       }}
-                      className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-white/15 transition-opacity"
+                      className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 p-1 rounded-md orbit-hover transition-opacity"
                       title="编辑"
                     >
                       <Pencil className="w-3 h-3" />
                     </button>
                   )}
-                </MotionCard>
+                </WidgetSurface>
               );
             }
 
             return (
-              <MotionCard
+              <WidgetSurface
                 key={bm.id}
+                cardless={cardless}
                 enableTilt={enableTilt && !selectMode}
-                disabled={layoutEditing}
+                layoutEditing={layoutEditing}
                 draggable={canDrag}
                 onDragStart={(e) => {
                   if (!canDrag) {
@@ -450,7 +498,8 @@ export function BookmarkDock({
                   borderColor: isSelected || isOver ? 'var(--brand)' : undefined,
                   boxShadow: isSelected ? '0 0 0 1px var(--brand)' : undefined,
                 }}
-                className="card-enter rounded-2xl p-3 flex items-center gap-2.5 cursor-pointer group"
+                cardClassName="card-enter rounded-2xl p-3 flex items-center gap-2.5 cursor-pointer group"
+                plainClassName="card-enter rounded-2xl px-2 py-2 flex items-center gap-2.5 cursor-pointer group hover:scale-[1.02] transition-transform"
               >
                 {selectMode && !bm.shared && (
                   <span
@@ -484,7 +533,10 @@ export function BookmarkDock({
                       </span>
                     )}
                   </div>
-                  <div className="text-xs font-mono truncate mt-0.5" style={{ color: 'var(--ink-muted)' }}>
+                  <div
+                    className="text-xs font-mono truncate mt-0.5"
+                    style={{ color: cardless ? 'var(--hero-ink-muted)' : 'var(--ink-muted)' }}
+                  >
                     {host}
                   </div>
                 </div>
@@ -495,13 +547,13 @@ export function BookmarkDock({
                       e.stopPropagation();
                       onEditBookmark(bm);
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/15 transition-opacity shrink-0"
+                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg orbit-hover transition-opacity shrink-0"
                     title="编辑"
                   >
                     <Pencil className="w-3.5 h-3.5" />
                   </button>
                 )}
-              </MotionCard>
+              </WidgetSurface>
             );
           })}
         </div>

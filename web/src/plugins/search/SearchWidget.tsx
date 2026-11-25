@@ -8,6 +8,7 @@ interface SearchWidgetProps {
   engines: SearchEngine[];
   activeEngineId: string;
   iconOnly: boolean;
+  cardless?: boolean;
   guestMode?: boolean;
   onSelectEngine: (id: string) => void;
   onOpenEngineManager: () => void;
@@ -21,6 +22,7 @@ export function SearchWidget({
   engines,
   activeEngineId,
   iconOnly,
+  cardless = false,
   guestMode = false,
   onSelectEngine,
   onOpenEngineManager,
@@ -67,9 +69,12 @@ export function SearchWidget({
   };
 
   const executeSearch = () => {
-    if (!trimmed) return;
+    if (!trimmed) {
+      inputRef.current?.focus();
+      return;
+    }
     if (!activeEngine?.url) {
-      onToast('当前为仅站内检索模式', true);
+      onToast('当前为站内检索模式', true);
       return;
     }
     const target = activeEngine.url.replace('{q}', encodeURIComponent(trimmed));
@@ -82,20 +87,37 @@ export function SearchWidget({
 
   return (
     <div ref={wrapRef} className="relative w-full">
-      <div className="glass rounded-2xl p-1.5 flex items-center gap-2 focus-within:border-[var(--glass-border-hover)]">
+      <div
+        className={
+          cardless
+            ? 'px-1.5 py-1 flex items-center gap-2 border-b transition-colors'
+            : 'glass rounded-2xl p-1.5 flex items-center gap-2 focus-within:border-[var(--glass-border-hover)]'
+        }
+        style={
+          cardless
+            ? {
+                borderColor: focused ? 'var(--brand)' : 'rgba(255, 255, 255, 0.42)',
+                color: 'var(--hero-ink)',
+                textShadow: 'var(--hero-shadow)',
+              }
+            : undefined
+        }
+      >
         <button
           type="button"
           onClick={() => setEngineMenuOpen((v) => !v)}
-          title={`${activeEngine?.name || 'Google'} (${activeEngine?.key || 'g'}，Tab 切换)`}
+          title={`${activeEngine?.name || 'Google'} (${activeEngine?.key || 'g'})`}
           className={`h-9 rounded-xl flex items-center justify-center shrink-0 cursor-pointer transition-colors ${
             iconOnly ? 'w-9' : 'pl-2.5 pr-2 gap-1.5 text-xs font-medium'
           }`}
-          style={{ background: 'var(--pill-bg)' }}
+          style={{ background: cardless ? 'rgba(255, 255, 255, 0.14)' : 'var(--pill-bg)' }}
         >
           <AppIcon
             icon={activeEngine?.icon}
             title={activeEngine?.name || 'G'}
             color={activeEngine?.color || '#60a5fa'}
+            engineId={activeEngine?.id}
+            targetUrl={activeEngine?.url}
             boxClass="w-5 h-5"
             iconClass="w-3.5 h-3.5"
             roundedClass="rounded-md"
@@ -133,7 +155,7 @@ export function SearchWidget({
             }
           }}
           className="flex-1 h-9 bg-transparent text-sm focus:outline-none min-w-0"
-          style={{ color: 'var(--ink)' }}
+          style={{ color: cardless ? 'var(--hero-ink)' : 'var(--ink)' }}
         />
 
         {query && (
@@ -144,7 +166,7 @@ export function SearchWidget({
               inputRef.current?.focus();
             }}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-xs cursor-pointer"
-            style={{ color: 'var(--ink-muted)' }}
+            style={{ color: cardless ? 'var(--hero-ink-muted)' : 'var(--ink-muted)' }}
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -154,7 +176,7 @@ export function SearchWidget({
           type="button"
           onClick={executeSearch}
           className="h-9 w-9 rounded-xl flex items-center justify-center text-white cursor-pointer hover:opacity-90 shrink-0"
-          style={{ background: 'var(--brand-solid)' }}
+          style={{ background: cardless ? 'rgba(255, 255, 255, 0.16)' : 'var(--brand-solid)' }}
           title="搜索"
         >
           <Search className="w-4 h-4" />
@@ -178,7 +200,7 @@ export function SearchWidget({
                 className="hover:underline cursor-pointer"
                 style={{ color: 'var(--brand)' }}
               >
-                管理与图标
+                管理
               </button>
             )}
           </div>
@@ -191,7 +213,7 @@ export function SearchWidget({
                 setEngineMenuOpen(false);
                 inputRef.current?.focus();
               }}
-              className="w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between text-xs cursor-pointer"
+              className="w-full px-2.5 py-1.5 rounded-xl flex items-center justify-between text-xs cursor-pointer orbit-hover"
               style={{
                 background: e.id === activeEngine?.id ? 'var(--pill-hover)' : 'transparent',
               }}
@@ -201,6 +223,8 @@ export function SearchWidget({
                   icon={e.icon}
                   title={e.name}
                   color={e.color}
+                  engineId={e.id}
+                  targetUrl={e.url}
                   boxClass="w-5 h-5"
                   iconClass="w-3.5 h-3.5"
                   roundedClass="rounded-md"
@@ -224,7 +248,7 @@ export function SearchWidget({
                 setQuery('');
                 setFocused(false);
               }}
-              className="w-full px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-xs hover:bg-white/10 cursor-pointer text-left"
+              className="w-full px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-xs orbit-hover cursor-pointer text-left"
             >
               <span className="flex items-center gap-2 min-w-0">
                 {s.icon !== undefined ? (
@@ -256,7 +280,7 @@ export function SearchWidget({
             <button
               type="button"
               onClick={executeSearch}
-              className="w-full px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-xs hover:bg-white/10 cursor-pointer text-left border-t mt-1"
+              className="w-full px-3 py-2 rounded-xl flex items-center justify-between gap-2 text-xs orbit-hover cursor-pointer text-left border-t mt-1"
               style={{ borderColor: 'var(--glass-border)' }}
             >
               <span>

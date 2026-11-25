@@ -1,36 +1,42 @@
 import { useOrbitHost } from '../../sdk/host';
-import type { OrbitPlugin } from '../../sdk/types';
+import { defineLightPlugin, type LightWidgetProps } from '../../sdk/light';
 import { WeatherSettingsPanel } from './WeatherSettingsPanel';
 import { WeatherWidget } from './WeatherWidget';
 
-function WeatherPluginWidget() {
+function WeatherLightRender({ ctx }: LightWidgetProps) {
   const host = useOrbitHost();
   return (
     <WeatherWidget
       weather={host.weather}
       config={host.settings.weatherConfig}
+      theme={ctx.theme}
+      cardless={ctx.cardless}
+      managed={ctx.managed}
       showSeconds={host.settings.showSeconds}
-      enableTilt={host.settings.enableTilt}
-      layoutEditing={host.layoutEditing && !host.isGuest}
-      readOnly={host.isGuest}
-      onOpenSettings={() => host.openSettings('weather')}
+      enableTilt={ctx.enableTilt}
+      layoutEditing={ctx.layoutEditing}
+      readOnly={ctx.readOnly}
+      onOpenSettings={() => ctx.openSettings('weather')}
     />
   );
 }
 
-export const weatherPlugin: OrbitPlugin = {
-  id: 'orbit.weather',
+export const weatherPlugin = defineLightPlugin({
   manifest: {
     id: 'orbit.weather',
-    name: '实况天气',
+    name: '实时天气',
     version: '1.0.0',
-    description: '精确到区县的实时气象与多日预报卡片',
+    description: '实时气象与多日预报',
     icon: 'cloud-sun',
-    tier: 'builtin',
     defaultEnabled: true,
     access: {
       minRole: 'public',
       guest: { mode: 'readonly' },
+      allowPublic: true,
+    },
+    style: {
+      managed: true,
+      supportsCardless: true,
     },
     contributes: {
       widgets: [
@@ -48,12 +54,10 @@ export const weatherPlugin: OrbitPlugin = {
         tabId: 'weather',
         label: '天气卡片',
         icon: 'cloud-sun',
-        searchKeywords: ['天气', '区县', '温度', '湿度', '风速', '气压', '预报', '样式', '自定义文案', '时间'],
+        searchKeywords: ['天气', '区县', '温度', '湿度', '风速', '气压', '预报', '样式'],
       },
     },
   },
-  widgets: {
-    main: WeatherPluginWidget,
-  },
+  render: WeatherLightRender,
   settingsPanel: WeatherSettingsPanel,
-};
+});

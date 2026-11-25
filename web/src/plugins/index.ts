@@ -20,5 +20,4 @@ export const BUILTIN_PLUGINS: OrbitPlugin[] = [
 ];
 
 export { BookmarkModal } from './bookmarks';
-export { MonitorModal } from './monitor';
 export { ShareModal } from './transfer';

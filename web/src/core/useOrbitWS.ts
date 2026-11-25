@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { setClientPeerId } from '../api/client';
 import type { ClipItem, PeerInfo, StagedFile } from '../types';
 import { OrbitP2PManager, type TransferProgress } from '../lib/webrtc';
 
@@ -9,10 +10,20 @@ export interface P2PCompleteInfo {
   speedBps: number;
 }
 
+export interface WSMutationEvent<T> {
+  action?: string;
+  id?: number;
+  notify?: boolean;
+  sender_peer_id?: string;
+  target_peer_id?: string;
+  clip?: T extends ClipItem ? ClipItem : never;
+  file?: T extends StagedFile ? StagedFile : never;
+}
+
 interface UseOrbitWSProps {
   enabled: boolean;
-  onClipsChanged: (event?: { action?: string; id?: number; clip?: ClipItem }) => void;
-  onFilesChanged: (event?: { action?: string; id?: number; file?: StagedFile }) => void;
+  onClipsChanged: (event?: WSMutationEvent<ClipItem>) => void;
+  onFilesChanged: (event?: WSMutationEvent<StagedFile>) => void;
   onP2PComplete: (info: P2PCompleteInfo) => void;
 }
 
@@ -29,12 +40,20 @@ export function useOrbitWS({
 
   const wsRef = useRef<WebSocket | null>(null);
   const p2pRef = useRef<OrbitP2PManager | null>(null);
+  const peersRef = useRef<PeerInfo[]>([]);
+  peersRef.current = peers;
   const callbacksRef = useRef({ onClipsChanged, onFilesChanged, onP2PComplete });
   callbacksRef.current = { onClipsChanged, onFilesChanged, onP2PComplete };
 
   useEffect(() => {
+    setClientPeerId(selfPeerId);
+  }, [selfPeerId]);
+
+  useEffect(() => {
     if (!enabled) {
       setPeers([]);
+      setSelfPeerId('');
+      setClientPeerId('');
       setWsConnected(false);
       return;
     }
@@ -77,10 +96,13 @@ export function useOrbitWS({
         try {
           const msg = JSON.parse(ev.data);
           switch (msg.type) {
-            case 'peers_updated':
-              setSelfPeerId(msg.payload?.self_peer_id || '');
+            case 'peers_updated': {
+              const pid = msg.payload?.self_peer_id || '';
+              setSelfPeerId(pid);
+              setClientPeerId(pid);
               setPeers(Array.isArray(msg.payload?.peers) ? msg.payload.peers : []);
               break;
+            }
             case 'clip_updated':
               callbacksRef.current.onClipsChanged(msg.payload);
               break;
@@ -127,7 +149,8 @@ export function useOrbitWS({
     if (!p2pRef.current) {
       throw new Error('P2P 通道未就绪');
     }
-    await p2pRef.current.sendFile(peerId, file);
+    const targetPeer = peersRef.current.find((p) => p.peer_id === peerId);
+    await p2pRef.current.sendFile(peerId, file, { sameLan: Boolean(targetPeer?.same_lan) });
   };
 
   return { peers, selfPeerId, wsConnected, p2pProgress, sendFileP2P };

@@ -8,13 +8,24 @@ export function MobileCapsule({ onBeforeSelect }: { onBeforeSelect?: () => void 
   const active = host.activeDrawer || 'home';
 
   return (
-    <nav className="flex md:hidden fixed bottom-4 left-0 right-0 z-30 justify-center pointer-events-none px-4">
-      <div className="pointer-events-auto glass-strong rounded-full px-1.5 py-1.5 inline-flex items-center gap-1 shadow-2xl">
+    <nav
+      id="mobileCapsule"
+      className="flex md:hidden fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-0 right-0 z-[45] justify-center pointer-events-none px-4"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="pointer-events-auto glass-strong rounded-full px-1.5 py-1.5 inline-flex items-center gap-1 shadow-2xl"
+      >
         <button
-          onClick={() => {
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
             onBeforeSelect?.();
             host.openDrawer(null);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            window.scrollTo({
+              top: 0,
+              behavior: host.settings.enableAnimations === false ? 'auto' : 'smooth',
+            });
           }}
           className="px-3.5 py-1.5 rounded-full inline-flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-colors"
           style={{
@@ -32,13 +43,16 @@ export function MobileCapsule({ onBeforeSelect }: { onBeforeSelect?: () => void 
           return (
             <button
               key={`${d.pluginId}:${d.drawer.id}`}
-              onClick={() => {
+              type="button"
+              data-drawer-trigger={d.drawer.id}
+              onClick={(e) => {
+                e.stopPropagation();
                 onBeforeSelect?.();
                 if (d.guestLocked) {
                   host.promptGuestLogin(d.guestPrompt || `${d.drawer.title}需要登录后使用`);
                   return;
                 }
-                host.openDrawer(d.drawer.id);
+                host.openDrawer(isActive ? null : d.drawer.id);
               }}
               className="relative px-3.5 py-1.5 rounded-full inline-flex items-center gap-1.5 text-xs font-medium cursor-pointer transition-colors"
               style={{

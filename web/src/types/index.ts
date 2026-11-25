@@ -6,8 +6,10 @@ export type LayoutItemId = string;
 export interface LayoutBox {
   left: number;
   cxRatio?: number;
+  canvasW?: number;
   top: number;
   w: number;
+  h?: number;
   z: number;
 }
 
@@ -36,17 +38,35 @@ export interface FontConfig {
   customFonts: CustomFontItem[];
 }
 
+export type ResourceCdnMode =
+  | 'local'
+  | 'jsdelivr'
+  | 'fastly'
+  | 'zstatic'
+  | 'jsdmirror'
+  | 'custom';
+
+export interface ResourceCdnConfig {
+  mode: ResourceCdnMode;
+  customUrl: string;
+}
+
 export interface LocalWallpaperItem {
   id: string;
   name: string;
   url: string;
 }
 
+export type WeatherProvider = 'auto' | 'china' | 'caiyun';
+
 export interface WeatherConfig {
   label: string;
   query: string;
+  stationId?: string;
   lat?: number;
   lon?: number;
+  provider?: WeatherProvider;
+  caiyunToken?: string;
   unit: 'C' | 'F';
   style?: 'standard' | 'banner';
   customText?: string;
@@ -104,6 +124,7 @@ export interface MonitorConfig {
 export interface FooterLink {
   label: string;
   url: string;
+  icon?: string;
 }
 
 export interface FooterConfig {
@@ -124,14 +145,18 @@ export interface ShareScopes {
   [key: string]: boolean;
 }
 
+export type ThemeMode = 'dark' | 'light' | 'auto';
+
 export interface UserSettings {
   glassTheme: 'dark' | 'light';
+  themeMode?: ThemeMode;
   glassBlur: number;
   glassBlurMode?: 'pct';
   glassAlpha: number;
   glassRadius: number;
   bgDim: number;
   fontConfig: FontConfig;
+  resourceCdn: ResourceCdnConfig;
   wallpaperMode: 'bing' | 'preset' | 'custom' | 'local';
   wallpaperPreset: number;
   wallpaperCustom: string;
@@ -140,6 +165,7 @@ export interface UserSettings {
   localWallpaperIntervalMin: 5 | 15 | 30 | 60;
   bingAuto: boolean;
   enableTilt: boolean;
+  enableAnimations: boolean;
   showSeconds: boolean;
   dockStyle: 'card' | 'icon';
   searchIconOnly: boolean;
@@ -151,6 +177,7 @@ export interface UserSettings {
   monitorConfig: MonitorConfig;
   footer: FooterConfig;
   visibleItems: Record<string, boolean>;
+  cardlessItems?: Record<string, boolean>;
   hasCustomLayout: boolean;
   layout: FreeLayoutMap | null;
   engines: SearchEngine[];
@@ -158,14 +185,17 @@ export interface UserSettings {
 }
 
 export interface PublicConfig {
+  version?: string;
   allowGuest: boolean;
   glassTheme?: 'dark' | 'light';
+  themeMode?: ThemeMode;
   glassBlur?: number;
   glassBlurMode?: 'pct';
   glassAlpha?: number;
   glassRadius?: number;
   bgDim?: number;
   fontConfig?: FontConfig;
+  resourceCdn?: ResourceCdnConfig;
   wallpaperMode?: 'bing' | 'preset' | 'custom' | 'local';
   wallpaperPreset?: number;
   wallpaperCustom?: string;
@@ -174,6 +204,7 @@ export interface PublicConfig {
   localWallpaperIntervalMin?: 5 | 15 | 30 | 60;
   bingAuto?: boolean;
   enableTilt?: boolean;
+  enableAnimations?: boolean;
   showSeconds?: boolean;
   searchIconOnly?: boolean;
   engines?: SearchEngine[];
@@ -183,6 +214,7 @@ export interface PublicConfig {
   weatherLabel?: string;
   hitokotoConfig?: HitokotoConfig;
   footer?: FooterConfig;
+  cardlessItems?: Record<string, boolean>;
   plugins?: PluginStateRecord[];
 }
 
@@ -198,6 +230,7 @@ export interface User {
 }
 
 export interface AuthStatus {
+  version?: string;
   initialized: boolean;
   authenticated: boolean;
   user: User | null;
@@ -326,6 +359,7 @@ export interface WeatherLocation {
   city: string;
   admin: string;
   country: string;
+  station_id?: string;
   lat: number;
   lon: number;
 }
@@ -358,6 +392,7 @@ export interface WeatherPayload {
   daily: WeatherDay[];
   slots: { label: string; temp: string }[];
   updated_at: string;
+  source?: string;
   fallback: boolean;
 }
 
@@ -398,6 +433,45 @@ export interface AccessSpec {
   guest: GuestSpec;
   sharing?: SharingSpec;
   permissions?: string[];
+  allowPublic?: boolean;
+}
+
+export interface PluginStyleSpec {
+  managed: boolean;
+  supportsCardless: boolean;
+  defaultCardless?: boolean;
+  hideHeader?: boolean;
+}
+
+export interface PluginVisibilityOverride {
+  minRole?: 'public' | 'user' | 'admin';
+  guestMode?: 'hidden' | 'readonly' | 'full' | 'login-prompt';
+}
+
+export interface PluginStyleOverride {
+  managed?: boolean;
+  cardless?: boolean;
+  hideHeader?: boolean;
+}
+
+export interface ManagedAsset {
+  category: 'wallpapers' | 'icons' | 'fonts' | 'clips';
+  name: string;
+  url: string;
+  size_bytes: number;
+  mod_time: string;
+  mime_hint: string;
+  owned: boolean;
+}
+
+export interface AssetsResponse {
+  assets: ManagedAsset[];
+  totals: {
+    wallpapers: number;
+    icons: number;
+    fonts: number;
+    clips: number;
+  };
 }
 
 export interface WidgetContrib {
@@ -475,9 +549,11 @@ export interface PluginManifest {
   version: string;
   description: string;
   icon: string;
-  tier: 'builtin' | 'external';
+  tier: 'core' | 'light' | 'builtin' | 'external';
+  source?: 'official' | 'external';
   defaultEnabled: boolean;
   access: AccessSpec;
+  style?: PluginStyleSpec;
   contributes: ContributesSpec;
   external?: ExternalSpec;
 }
@@ -486,4 +562,6 @@ export interface PluginStateRecord {
   manifest: PluginManifest;
   enabled: boolean;
   config: Record<string, unknown>;
+  visibility?: PluginVisibilityOverride;
+  style?: PluginStyleOverride;
 }

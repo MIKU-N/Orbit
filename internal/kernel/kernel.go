@@ -259,6 +259,52 @@ func (k *Kernel) IsPluginEnabled(pluginID string) bool {
 	return en == 1
 }
 
+func (k *Kernel) EffectivePluginAccess(pluginID string) (plugin.AccessSpec, bool) {
+	k.mu.RLock()
+	var m plugin.Manifest
+	var found bool
+	if p, ok := k.builtins[pluginID]; ok {
+		m = p.Manifest()
+		found = true
+	} else if ext, ok := k.externals[pluginID]; ok {
+		m = ext.manifest
+		found = true
+	}
+	k.mu.RUnlock()
+	if !found {
+		return plugin.AccessSpec{}, false
+	}
+	_ = plugin.ValidateManifest(&m)
+
+	var visRaw string
+	if err := k.db.QueryRow(`SELECT visibility_json FROM plugin_states WHERE plugin_id = ?`, pluginID).Scan(&visRaw); err == nil {
+		if trimmed := strings.TrimSpace(visRaw); trimmed != "" && trimmed != "{}" && trimmed != "null" {
+			var ov plugin.VisibilityOverride
+			if json.Unmarshal([]byte(trimmed), &ov) == nil {
+				return m.EffectiveAccess(&ov), true
+			}
+		}
+	}
+	return m.Access, true
+}
+
+func (k *Kernel) CanUserAccessPlugin(pluginID string, u *db.User) bool {
+	acc, ok := k.EffectivePluginAccess(pluginID)
+	if !ok {
+		return false
+	}
+	if u != nil && u.Role == "admin" {
+		return true
+	}
+	if acc.MinRole == "admin" {
+		return false
+	}
+	if u == nil {
+		return acc.MinRole == "public" && (acc.Guest.Mode == "readonly" || acc.Guest.Mode == "full")
+	}
+	return true
+}
+
 func (k *Kernel) dispatchWSMessage(ctx plugin.WSContext, msgType string, payload json.RawMessage) {
 	k.mu.RLock()
 	list := make([]plugin.Plugin, 0, len(k.builtins))
@@ -288,6 +334,16 @@ func (rg *routeGroup) wrapEnabled(h http.HandlerFunc) http.HandlerFunc {
 		if !rg.k.IsPluginEnabled(rg.pluginID) {
 			plugin.WriteErr(w, http.StatusForbidden, "plugin disabled")
 			return
+		}
+		if acc, ok := rg.k.EffectivePluginAccess(rg.pluginID); ok && acc.MinRole == "admin" {
+			u := rg.k.CurrentUser(r)
+			if u == nil {
+				u, _ = rg.k.authenticateRequest(r)
+			}
+			if u == nil || u.Role != "admin" {
+				plugin.WriteErr(w, http.StatusForbidden, "该插件仅限管理员使用")
+				return
+			}
 		}
 		h(w, r)
 	}

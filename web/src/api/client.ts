@@ -1,4 +1,5 @@
 import type {
+  AssetsResponse,
   AuthStatus,
   BingWallpaperItem,
   Bookmark,
@@ -8,6 +9,8 @@ import type {
   HitokotoQuote,
   PluginManifest,
   PluginStateRecord,
+  PluginStyleOverride,
+  PluginVisibilityOverride,
   PublicConfig,
   PublicShareMeta,
   ShareScopes,
@@ -29,16 +32,56 @@ export class APIError extends Error {
   }
 }
 
+let activeClientPeerId = '';
+
+export function setClientPeerId(peerId: string) {
+  activeClientPeerId = peerId || '';
+}
+
+function friendlyErrorMessage(status: number, raw?: string): string {
+  const s = (raw || '').trim();
+  const map: Record<string, string> = {
+    unauthorized: '登录状态已过期，请重新登录',
+    'admin only': '仅管理员可执行此操作',
+    'invalid json': '请求数据格式有误',
+    'invalid username or password': '用户名或密码错误',
+    'username already exists': '用户名已存在',
+    'plugin disabled': '该组件已被禁用',
+    'database error': '服务端数据库异常',
+    'file not found': '文件不存在或已被删除',
+    'clip not found': '剪贴板记录不存在',
+    'bookmark not found': '书签不存在',
+    'group not found': '分组不存在',
+  };
+  const lower = s.toLowerCase();
+  if (map[lower]) return map[lower];
+  if (s) return s;
+  if (status === 401) return '登录状态已过期，请重新登录';
+  if (status === 403) return '权限不足，无法执行此操作';
+  if (status === 404) return '请求的资源不存在';
+  if (status === 413) return '上传文件超出大小限制';
+  if (status >= 500) return `服务器错误 (${status})`;
+  return `请求失败 (HTTP ${status})`;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers || {});
   if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const resp = await fetch(path, {
-    credentials: 'include',
-    ...init,
-    headers,
-  });
+  if (activeClientPeerId && !headers.has('X-Orbit-Peer-Id')) {
+    headers.set('X-Orbit-Peer-Id', activeClientPeerId);
+  }
+  let resp: Response;
+  try {
+    resp = await fetch(path, {
+      credentials: 'include',
+      ...init,
+      headers,
+    });
+  } catch {
+    throw new APIError(0, '无法连接服务器，请检查网络');
+  }
   const text = await resp.text();
   let parsed: Record<string, unknown> = {};
   if (text) {
@@ -49,7 +92,11 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
   if (!resp.ok) {
-    throw new APIError(resp.status, String(parsed.error || `HTTP ${resp.status}`), parsed);
+    throw new APIError(
+      resp.status,
+      friendlyErrorMessage(resp.status, typeof parsed.error === 'string' ? parsed.error : ''),
+      parsed,
+    );
   }
   return parsed as T;
 }
@@ -176,14 +223,19 @@ export const api = {
     }),
 
   listClips: () => req<{ clips: ClipItem[] }>('/api/clips'),
-  createClip: (content: string, kind?: string) =>
+  createClip: (content: string, kind?: string, targetPeerId?: string) =>
     req<{ clip: ClipItem }>('/api/clips', {
       method: 'POST',
-      body: JSON.stringify({ content, kind }),
+      body: JSON.stringify({
+        content,
+        kind,
+        target_peer_id: targetPeerId || undefined,
+      }),
     }),
-  uploadClipImage: (file: File) => {
+  uploadClipImage: (file: File, targetPeerId?: string) => {
     const fd = new FormData();
     fd.append('image', file);
+    if (targetPeerId) fd.append('target_peer_id', targetPeerId);
     return req<{ clip: ClipItem }>('/api/clips/image', { method: 'POST', body: fd });
   },
   toggleClipPin: (id: number, pinned: boolean) =>
@@ -194,60 +246,266 @@ export const api = {
   deleteClip: (id: number) => req<{ ok: boolean }>(`/api/clips/${id}`, { method: 'DELETE' }),
 
   listFiles: () => req<FilesResponse>('/api/files'),
+  updateFile: (
+    id: number,
+    patch: { orig_name?: string; ttl_hours?: number; permanent?: boolean },
+  ) =>
+    req<{ ok: boolean; orig_name: string; expires_at: string }>(`/api/files/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
   deleteFile: (id: number) => req<{ ok: boolean }>(`/api/files/${id}`, { method: 'DELETE' }),
-  uploadFileWithProgress: (
+  batchDeleteFiles: (ids: number[]) =>
+    req<{ ok: boolean; deleted: number }>('/api/files/batch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
+  listAssets: (category = 'all') =>
+    req<AssetsResponse>(`/api/assets?category=${encodeURIComponent(category)}`),
+  deleteAsset: (category: string, name: string) =>
+    req<{ ok: boolean }>(`/api/assets/${encodeURIComponent(category)}/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+  batchDeleteAssets: (items: { category: string; name: string }[]) =>
+    req<{ ok: boolean; deleted: number }>('/api/assets/batch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    }),
+  uploadFileWithProgress: async (
     file: File,
     ttlHours: number,
     onProgress: (prog: { percent: number; loaded: number; total: number; speedBps: number }) => void,
+    opts?: { permanent?: boolean; targetPeerId?: string },
   ): Promise<{ file: StagedFile }> => {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/files');
-      xhr.withCredentials = true;
-      const startedAt = performance.now();
-      let lastEmit = 0;
-      let sampleAt = startedAt;
-      let sampleLoaded = 0;
-      let speedBps = 0;
-      xhr.upload.onprogress = (ev) => {
-        if (!ev.lengthComputable) return;
-        const now = performance.now();
-        if (now - lastEmit < 120 && ev.loaded < ev.total) return;
-        const winSec = (now - sampleAt) / 1000;
-        if (winSec >= 0.3) {
-          speedBps = Math.max(0, (ev.loaded - sampleLoaded) / winSec);
-          sampleLoaded = ev.loaded;
-          sampleAt = now;
-        } else if (speedBps === 0) {
-          speedBps = ev.loaded / Math.max(0.05, (now - startedAt) / 1000);
+    const CHUNKED_THRESHOLD = 4 * 1024 * 1024; // >= 4 MB uses parallel raw binary chunk upload
+    const PARALLEL_WORKERS = 4;
+
+    // Small files: direct single-request upload
+    if (file.size < CHUNKED_THRESHOLD) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        let settled = false;
+        xhr.open('POST', '/api/files');
+        xhr.withCredentials = true;
+        if (activeClientPeerId) {
+          xhr.setRequestHeader('X-Orbit-Peer-Id', activeClientPeerId);
         }
-        lastEmit = now;
-        onProgress({
-          percent: Math.min(100, Math.round((ev.loaded / ev.total) * 100)),
-          loaded: ev.loaded,
-          total: ev.total,
-          speedBps,
-        });
-      };
-      xhr.onload = () => {
-        let parsed: Record<string, unknown> = {};
-        try {
-          parsed = JSON.parse(xhr.responseText || '{}');
-        } catch {
-          parsed = { error: xhr.responseText };
+        if (opts?.targetPeerId) {
+          xhr.setRequestHeader('X-Orbit-Target-Peer-Id', opts.targetPeerId);
         }
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(parsed as { file: StagedFile });
-        } else {
-          reject(new APIError(xhr.status, String(parsed.error || `HTTP ${xhr.status}`), parsed));
-        }
-      };
-      xhr.onerror = () => reject(new APIError(0, '网络传输中断'));
-      const fd = new FormData();
-      fd.append('ttl_hours', String(ttlHours));
-      fd.append('file', file);
-      xhr.send(fd);
+        const startedAt = performance.now();
+        let lastEmit = 0;
+        let sampleAt = startedAt;
+        let sampleLoaded = 0;
+        let speedBps = 0;
+        xhr.upload.onprogress = (ev) => {
+          if (settled || !ev.lengthComputable) return;
+          const now = performance.now();
+          if (now - lastEmit < 100 && ev.loaded < ev.total) return;
+          const winSec = (now - sampleAt) / 1000;
+          if (winSec >= 0.25) {
+            speedBps = Math.max(0, (ev.loaded - sampleLoaded) / winSec);
+            sampleLoaded = ev.loaded;
+            sampleAt = now;
+          } else if (speedBps === 0) {
+            speedBps = ev.loaded / Math.max(0.02, (now - startedAt) / 1000);
+          }
+          lastEmit = now;
+          onProgress({
+            percent: Math.min(99, Math.round((ev.loaded / ev.total) * 100)),
+            loaded: ev.loaded,
+            total: ev.total,
+            speedBps,
+          });
+        };
+        xhr.onload = () => {
+          settled = true;
+          let parsed: Record<string, unknown> = {};
+          try {
+            parsed = JSON.parse(xhr.responseText || '{}');
+          } catch {
+            parsed = { error: xhr.responseText };
+          }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(parsed as { file: StagedFile });
+          } else {
+            reject(
+              new APIError(
+                xhr.status,
+                friendlyErrorMessage(xhr.status, typeof parsed.error === 'string' ? parsed.error : ''),
+                parsed,
+              ),
+            );
+          }
+        };
+        xhr.onerror = () => {
+          settled = true;
+          reject(new APIError(0, '网络传输中断，请重试'));
+        };
+        const fd = new FormData();
+        fd.append('ttl_hours', String(opts?.permanent ? 0 : ttlHours));
+        if (opts?.permanent) fd.append('permanent', '1');
+        if (opts?.targetPeerId) fd.append('target_peer_id', opts.targetPeerId);
+        if (activeClientPeerId) fd.append('sender_peer_id', activeClientPeerId);
+        fd.append('file', file);
+        xhr.send(fd);
+      });
+    }
+
+    // Large files (>= 4 MB): 4-way parallel raw binary chunk upload (bypasses multipart 4KB scan
+    // and saturates high-bandwidth Wi-Fi 6 / 2.5GbE LAN links)
+    const init = await req<{ upload_id: string; chunk_size: number }>('/api/files/upload/init', {
+      method: 'POST',
+      body: JSON.stringify({
+        file_name: file.name,
+        size: file.size,
+        mime_type: file.type || 'application/octet-stream',
+        ttl_hours: opts?.permanent ? 0 : ttlHours,
+        permanent: Boolean(opts?.permanent),
+        target_peer_id: opts?.targetPeerId || undefined,
+        sender_peer_id: activeClientPeerId || undefined,
+      }),
     });
+
+    const uploadId = init.upload_id;
+    const chunkSize = Math.max(1024 * 1024, init.chunk_size || 8 * 1024 * 1024);
+    const totalChunks = Math.ceil(file.size / chunkSize);
+    const chunkLoaded = new Array<number>(totalChunks).fill(0);
+
+    const startedAt = performance.now();
+    let lastEmit = 0;
+    let sampleAt = startedAt;
+    let sampleLoaded = 0;
+    let speedBps = 0;
+    let aborted = false;
+    const activeXhrs = new Set<XMLHttpRequest>();
+
+    const emitAggregate = (force = false) => {
+      if (aborted) return;
+      const now = performance.now();
+      if (!force && now - lastEmit < 100) return;
+      let loaded = 0;
+      for (let i = 0; i < totalChunks; i += 1) {
+        loaded += chunkLoaded[i];
+      }
+      if (loaded > file.size) loaded = file.size;
+      const winSec = (now - sampleAt) / 1000;
+      if (winSec >= 0.25) {
+        speedBps = Math.max(0, (loaded - sampleLoaded) / winSec);
+        sampleLoaded = loaded;
+        sampleAt = now;
+      } else if (speedBps === 0) {
+        speedBps = loaded / Math.max(0.02, (now - startedAt) / 1000);
+      }
+      lastEmit = now;
+      onProgress({
+        percent: Math.min(99, Math.round((loaded / file.size) * 100)),
+        loaded,
+        total: file.size,
+        speedBps,
+      });
+    };
+
+    const uploadOneChunk = (idx: number): Promise<void> => {
+      const offset = idx * chunkSize;
+      const end = Math.min(file.size, offset + chunkSize);
+      const slice = file.slice(offset, end);
+      const expectedLen = end - offset;
+
+      const attempt = (retriesLeft: number): Promise<void> =>
+        new Promise((resolve, reject) => {
+          if (aborted) {
+            reject(new Error('upload aborted'));
+            return;
+          }
+          const xhr = new XMLHttpRequest();
+          activeXhrs.add(xhr);
+          xhr.open('PUT', `/api/files/upload/${encodeURIComponent(uploadId)}/chunk?offset=${offset}`);
+          xhr.withCredentials = true;
+          xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+          xhr.upload.onprogress = (ev) => {
+            if (aborted) return;
+            chunkLoaded[idx] = Math.min(expectedLen, ev.loaded);
+            emitAggregate(false);
+          };
+          xhr.onload = () => {
+            activeXhrs.delete(xhr);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              chunkLoaded[idx] = expectedLen;
+              emitAggregate(false);
+              resolve();
+              return;
+            }
+            if (retriesLeft > 0 && xhr.status >= 500) {
+              chunkLoaded[idx] = 0;
+              void attempt(retriesLeft - 1).then(resolve, reject);
+              return;
+            }
+            let parsed: Record<string, unknown> = {};
+            try {
+              parsed = JSON.parse(xhr.responseText || '{}');
+            } catch {
+              parsed = { error: xhr.responseText };
+            }
+            reject(
+              new APIError(
+                xhr.status,
+                friendlyErrorMessage(xhr.status, typeof parsed.error === 'string' ? parsed.error : ''),
+                parsed,
+              ),
+            );
+          };
+          xhr.onerror = () => {
+            activeXhrs.delete(xhr);
+            if (retriesLeft > 0 && !aborted) {
+              chunkLoaded[idx] = 0;
+              void attempt(retriesLeft - 1).then(resolve, reject);
+              return;
+            }
+            reject(new APIError(0, '网络传输中断，请重试'));
+          };
+          xhr.onabort = () => {
+            activeXhrs.delete(xhr);
+            reject(new Error('upload aborted'));
+          };
+          xhr.send(slice);
+        });
+
+      return attempt(2);
+    };
+
+    try {
+      let nextIdx = 0;
+      const workerCount = Math.min(PARALLEL_WORKERS, totalChunks);
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (!aborted) {
+          const idx = nextIdx;
+          nextIdx += 1;
+          if (idx >= totalChunks) break;
+          await uploadOneChunk(idx);
+        }
+      });
+      await Promise.all(workers);
+      aborted = true; // stop any residual progress callbacks before finalize
+      return await req<{ file: StagedFile }>(
+        `/api/files/upload/${encodeURIComponent(uploadId)}/complete`,
+        { method: 'POST' },
+      );
+    } catch (err) {
+      aborted = true;
+      activeXhrs.forEach((x) => {
+        try {
+          x.abort();
+        } catch {
+          // ignore
+        }
+      });
+      activeXhrs.clear();
+      void req(`/api/files/upload/${encodeURIComponent(uploadId)}`, { method: 'DELETE' }).catch(
+        () => {},
+      );
+      throw err;
+    }
   },
 
   createShare: (kind: 'file' | 'clip', targetId: number, ttlMinutes: number, burnAfterRead: boolean) =>
@@ -286,10 +544,30 @@ export const api = {
     ),
   searchWeatherLocations: (q: string) =>
     req<{ results: WeatherLocation[] }>(`/api/weather/search?q=${encodeURIComponent(q)}`),
+  locateWeather: (coords?: { lat: number; lon: number }) => {
+    const params = new URLSearchParams();
+    if (coords && Number.isFinite(coords.lat) && Number.isFinite(coords.lon)) {
+      params.set('lat', String(coords.lat));
+      params.set('lon', String(coords.lon));
+    }
+    const qs = params.toString();
+    return req<{ location: WeatherLocation; method: 'gps' | 'ip' }>(
+      `/api/weather/locate${qs ? `?${qs}` : ''}`,
+    );
+  },
   getWeather: (
     opts:
       | string
-      | { city?: string; label?: string; lat?: number; lon?: number; refresh?: boolean },
+      | {
+          city?: string;
+          label?: string;
+          stationId?: string;
+          lat?: number;
+          lon?: number;
+          provider?: string;
+          caiyunToken?: string;
+          refresh?: boolean;
+        },
   ) => {
     if (typeof opts === 'string') {
       return req<WeatherPayload>(`/api/weather?city=${encodeURIComponent(opts)}`);
@@ -301,6 +579,9 @@ export const api = {
     }
     if (opts.city) params.set('city', opts.city);
     if (opts.label) params.set('label', opts.label);
+    if (opts.stationId) params.set('station_id', opts.stationId);
+    if (opts.provider) params.set('provider', opts.provider);
+    if (opts.caiyunToken) params.set('token', opts.caiyunToken);
     if (opts.refresh) params.set('refresh', '1');
     return req<WeatherPayload>(`/api/weather?${params.toString()}`);
   },
@@ -316,7 +597,15 @@ export const api = {
   listBuiltinHitokoto: () => req<{ quotes: HitokotoQuote[] }>('/api/hitokoto/builtin'),
 
   listPlugins: () => req<{ plugins: PluginStateRecord[] }>('/api/plugins'),
-  updatePlugin: (id: string, patch: { enabled?: boolean; config?: Record<string, unknown> }) =>
+  updatePlugin: (
+    id: string,
+    patch: {
+      enabled?: boolean;
+      config?: Record<string, unknown>;
+      visibility?: PluginVisibilityOverride;
+      style?: PluginStyleOverride;
+    },
+  ) =>
     req<{ ok: boolean; plugins: PluginStateRecord[] }>(`/api/plugins/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),

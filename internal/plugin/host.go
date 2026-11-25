@@ -23,6 +23,8 @@ type KVStore interface {
 
 type WSHub interface {
 	BroadcastUser(userID int64, msgType string, payload any)
+	BroadcastUserExcept(userID int64, excludePeerIDs []string, msgType string, payload any)
+	SendToPeer(userID int64, targetPeerID string, msgType string, payload any) bool
 	RelaySignal(userID int64, fromPeerID, targetPeerID string, signal json.RawMessage)
 }
 

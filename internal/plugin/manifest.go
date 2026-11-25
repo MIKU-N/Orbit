@@ -22,10 +22,29 @@ type SharingSpec struct {
 }
 
 type AccessSpec struct {
-	MinRole     string       `json:"minRole"` // "public" | "user" | "admin"
-	Guest       GuestSpec    `json:"guest"`
-	Sharing     *SharingSpec `json:"sharing,omitempty"`
-	Permissions []string     `json:"permissions,omitempty"`
+	MinRole      string       `json:"minRole"` // "public" | "user" | "admin"
+	Guest        GuestSpec    `json:"guest"`
+	Sharing      *SharingSpec `json:"sharing,omitempty"`
+	Permissions  []string     `json:"permissions,omitempty"`
+	AllowPublic  bool         `json:"allowPublic,omitempty"` // whether admin may expose this plugin to unauthenticated guests
+}
+
+type StyleSpec struct {
+	Managed          bool `json:"managed"`                    // accepts global managed theme/font/radius/glass tokens
+	SupportsCardless bool `json:"supportsCardless"`           // supports rendering without outer card chrome
+	DefaultCardless  bool `json:"defaultCardless,omitempty"`  // render without outer card chrome by default
+	HideHeader       bool `json:"hideHeader,omitempty"`       // hide external widget title header
+}
+
+type VisibilityOverride struct {
+	MinRole   string `json:"minRole,omitempty"`   // "public" | "user" | "admin"
+	GuestMode string `json:"guestMode,omitempty"` // "hidden" | "readonly" | "full" | "login-prompt"
+}
+
+type StyleOverride struct {
+	Managed    *bool `json:"managed,omitempty"`
+	Cardless   *bool `json:"cardless,omitempty"`
+	HideHeader *bool `json:"hideHeader,omitempty"`
 }
 
 type WidgetContrib struct {
@@ -103,17 +122,21 @@ type Manifest struct {
 	Version        string          `json:"version"`
 	Description    string          `json:"description"`
 	Icon           string          `json:"icon"`
-	Tier           string          `json:"tier"` // "builtin" | "external"
+	Tier           string          `json:"tier"`             // "core" | "light"
+	Source         string          `json:"source,omitempty"` // "official" | "external"
 	DefaultEnabled bool            `json:"defaultEnabled"`
 	Access         AccessSpec      `json:"access"`
+	Style          *StyleSpec      `json:"style,omitempty"`
 	Contributes    ContributesSpec `json:"contributes"`
 	External       *ExternalSpec   `json:"external,omitempty"`
 }
 
 type PluginStateRecord struct {
-	Manifest Manifest       `json:"manifest"`
-	Enabled  bool           `json:"enabled"`
-	Config   map[string]any `json:"config"`
+	Manifest   Manifest            `json:"manifest"`
+	Enabled    bool                `json:"enabled"`
+	Config     map[string]any      `json:"config"`
+	Visibility *VisibilityOverride `json:"visibility,omitempty"`
+	Style      *StyleOverride      `json:"style,omitempty"`
 }
 
 func IsValidPluginID(id string) bool {
@@ -124,6 +147,30 @@ func IsValidPluginID(id string) bool {
 		return false
 	}
 	return validPluginIDRe.MatchString(id)
+}
+
+func NormalizeTier(tier, source string) (string, string) {
+	switch tier {
+	case "core":
+		if source == "" {
+			source = "official"
+		}
+		return "core", source
+	case "light":
+		if source == "" {
+			source = "external"
+		}
+		return "light", source
+	case "builtin":
+		return "core", "official"
+	case "external":
+		return "light", "external"
+	default:
+		if source == "official" {
+			return "light", "official"
+		}
+		return "light", "external"
+	}
 }
 
 func ValidateManifest(m *Manifest) error {
@@ -140,19 +187,26 @@ func ValidateManifest(m *Manifest) error {
 	if strings.TrimSpace(m.Version) == "" {
 		m.Version = "1.0.0"
 	}
-	if m.Tier != "builtin" && m.Tier != "external" {
-		m.Tier = "external"
-	}
+	m.Tier, m.Source = NormalizeTier(m.Tier, m.Source)
 	if m.Access.MinRole == "" {
 		m.Access.MinRole = "user"
 	}
 	if m.Access.Guest.Mode == "" {
 		m.Access.Guest.Mode = "hidden"
 	}
+	if m.Access.MinRole == "public" || m.Source == "external" {
+		m.Access.AllowPublic = true
+	}
 	if m.Access.Sharing != nil {
 		m.Access.Sharing.DefaultShared = false
 	}
-	if m.Tier == "external" && m.External != nil {
+	if m.Style == nil {
+		m.Style = &StyleSpec{
+			Managed:          true,
+			SupportsCardless: true,
+		}
+	}
+	if m.Source == "external" && m.External != nil {
 		if m.External.RenderMode == "" {
 			if strings.HasSuffix(strings.ToLower(m.External.Entry), ".mjs") || strings.HasSuffix(strings.ToLower(m.External.Entry), ".js") {
 				m.External.RenderMode = "esm"
@@ -168,7 +222,7 @@ func ValidateManifest(m *Manifest) error {
 }
 
 func (m Manifest) HasPermission(perm string) bool {
-	if m.Tier == "builtin" {
+	if m.Source == "official" || m.Tier == "core" {
 		return true
 	}
 	for _, p := range m.Access.Permissions {
@@ -177,4 +231,45 @@ func (m Manifest) HasPermission(perm string) bool {
 		}
 	}
 	return false
+}
+
+// EffectiveAccess applies an optional admin VisibilityOverride onto the manifest default access spec.
+func (m Manifest) EffectiveAccess(ov *VisibilityOverride) AccessSpec {
+	acc := m.Access
+	if ov == nil {
+		return acc
+	}
+	switch ov.MinRole {
+	case "public":
+		if m.Access.AllowPublic || m.Access.MinRole == "public" || m.Source == "external" {
+			acc.MinRole = "public"
+			if ov.GuestMode != "" {
+				acc.Guest.Mode = ov.GuestMode
+			} else if acc.Guest.Mode == "hidden" || acc.Guest.Mode == "login-prompt" {
+				acc.Guest.Mode = "readonly"
+			}
+		}
+	case "user":
+		acc.MinRole = "user"
+		if ov.GuestMode == "hidden" || ov.GuestMode == "login-prompt" {
+			acc.Guest.Mode = ov.GuestMode
+		} else {
+			acc.Guest.Mode = "hidden"
+		}
+	case "admin":
+		acc.MinRole = "admin"
+		acc.Guest.Mode = "hidden"
+	default:
+		if ov.GuestMode != "" {
+			switch ov.GuestMode {
+			case "hidden", "login-prompt":
+				acc.Guest.Mode = ov.GuestMode
+			case "readonly", "full":
+				if m.Access.AllowPublic || m.Access.MinRole == "public" || m.Source == "external" {
+					acc.Guest.Mode = ov.GuestMode
+				}
+			}
+		}
+	}
+	return acc
 }

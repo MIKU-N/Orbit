@@ -1,35 +1,42 @@
 import { useOrbitHost } from '../../sdk/host';
-import type { OrbitPlugin } from '../../sdk/types';
+import { defineLightPlugin, type LightWidgetProps } from '../../sdk/light';
 import { ClockWidget } from './ClockWidget';
 
-function ClockPluginWidget() {
+function ClockLightRender({ ctx }: LightWidgetProps) {
   const host = useOrbitHost();
   return (
     <ClockWidget
       showSeconds={host.settings.showSeconds}
+      cardless={ctx.cardless}
+      managed={ctx.managed}
+      enableTilt={ctx.enableTilt}
       onToggleSeconds={() => {
-        if (!host.isGuest) {
+        if (!ctx.readOnly) {
           host.updateSettings({ showSeconds: !host.settings.showSeconds });
         }
       }}
-      layoutEditing={host.layoutEditing && !host.isGuest}
+      layoutEditing={ctx.layoutEditing}
     />
   );
 }
 
-export const clockPlugin: OrbitPlugin = {
-  id: 'orbit.clock',
+export const clockPlugin = defineLightPlugin({
   manifest: {
     id: 'orbit.clock',
     name: '数字时钟',
     version: '1.0.0',
-    description: '桌面极简数字时钟与星期显示，点击切换秒数',
+    description: '数字时钟与日期显示',
     icon: 'clock',
-    tier: 'builtin',
     defaultEnabled: true,
     access: {
       minRole: 'public',
       guest: { mode: 'full' },
+      allowPublic: true,
+    },
+    style: {
+      managed: true,
+      supportsCardless: true,
+      defaultCardless: true,
     },
     contributes: {
       widgets: [
@@ -39,13 +46,11 @@ export const clockPlugin: OrbitPlugin = {
           label: '时钟',
           minW: 220,
           defaultW: 340,
-          resizable: false,
+          resizable: true,
           defaultVisible: true,
         },
       ],
     },
   },
-  widgets: {
-    main: ClockPluginWidget,
-  },
-};
+  render: ClockLightRender,
+});

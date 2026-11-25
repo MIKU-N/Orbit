@@ -18,6 +18,7 @@ interface IconPickerProps {
   icon: string;
   color: string;
   title?: string;
+  engineId?: string;
   fetchTargetUrl?: string;
   onChangeIcon: (icon: string) => void;
   onChangeColor?: (color: string) => void;
@@ -29,6 +30,7 @@ export function IconPicker({
   icon,
   color,
   title = 'O',
+  engineId,
   fetchTargetUrl,
   onChangeIcon,
   onChangeColor,
@@ -77,6 +79,8 @@ export function IconPicker({
           icon={icon}
           title={title}
           color={color}
+          engineId={engineId}
+          targetUrl={fetchTargetUrl}
           boxClass={compact ? 'w-8 h-8' : 'w-9 h-9'}
           roundedClass="rounded-xl"
         />

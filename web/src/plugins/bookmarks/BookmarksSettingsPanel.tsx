@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { useOrbitHost } from '../../sdk/host';
-import { AppIcon, IconPicker, getBookmarkActiveUrl } from '../../sdk/primitives';
+import { AppIcon, IconPicker, OrbitSelect, getBookmarkActiveUrl } from '../../sdk/primitives';
 import type { Bookmark } from '../../types';
 import type { SettingsPanelProps } from '../../sdk/types';
 
@@ -74,13 +74,11 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
     toast,
   } = host;
 
-  // Group management state
   const [newGroupName, setNewGroupName] = useState('');
   const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [editingGroupName, setEditingGroupName] = useState('');
   const [confirmDeleteGroupId, setConfirmDeleteGroupId] = useState<number | null>(null);
 
-  // Expandable bookmark list & editing state
   const [listExpanded, setListExpanded] = useState(true);
   const [filterGroupId, setFilterGroupId] = useState<number | 'all'>('all');
   const [searchText, setSearchText] = useState('');
@@ -89,7 +87,6 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
   const [batchBusy, setBatchBusy] = useState(false);
   const [moveTargetGroupId, setMoveTargetGroupId] = useState<number>(0);
 
-  // Inline create / edit bookmark state
   const [creatingNew, setCreatingNew] = useState(false);
   const [newDraft, setNewDraft] = useState<BookmarkDraft>(() => emptyDraft(0));
   const [savingNew, setSavingNew] = useState(false);
@@ -99,7 +96,6 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
   const [savingEdit, setSavingEdit] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
 
-  // Import state
   const [importTab, setImportTab] = useState<'sunpanel' | 'browser'>('sunpanel');
   const [browserHtml, setBrowserHtml] = useState('');
   const [browserGroupName, setBrowserGroupName] = useState('浏览器书签');
@@ -117,8 +113,27 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
     return counts;
   }, [bookmarks]);
 
+  const ownGroupOptions = useMemo(
+    () => ownGroups.map((g) => ({ value: String(g.id), label: g.name })),
+    [ownGroups],
+  );
+
+  const filterGroupOptions = useMemo(
+    () => [
+      { value: 'all', label: `全部分组 (${bookmarks.length})` },
+      ...groups.map((g) => ({
+        value: String(g.id),
+        label: `${g.name} (${groupCountMap.get(g.id) || 0})`,
+      })),
+    ],
+    [bookmarks.length, groupCountMap, groups],
+  );
+
   useEffect(() => {
-    if (ownGroups.length > 0 && (!moveTargetGroupId || !ownGroups.some((g) => g.id === moveTargetGroupId))) {
+    if (
+      ownGroups.length > 0 &&
+      (!moveTargetGroupId || !ownGroups.some((g) => g.id === moveTargetGroupId))
+    ) {
       setMoveTargetGroupId(ownGroups[0].id);
     }
   }, [ownGroups, moveTargetGroupId]);
@@ -218,6 +233,43 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
     setCreatingNew(true);
   };
 
+  const handleCreateGroup = async () => {
+    const name = newGroupName.trim();
+    if (!name) {
+      toast('请输入分组名称', true);
+      return;
+    }
+    try {
+      await createGroup(name);
+      setNewGroupName('');
+    } catch (e) {
+      toast((e as Error).message || '新建分组失败', true);
+    }
+  };
+
+  const handleRenameGroup = async (id: number) => {
+    const name = editingGroupName.trim();
+    if (!name) {
+      toast('分组名称不能为空', true);
+      return;
+    }
+    try {
+      await updateGroup(id, name);
+      setEditingGroupId(null);
+    } catch (e) {
+      toast((e as Error).message || '重命名分组失败', true);
+    }
+  };
+
+  const handleDeleteGroupSafe = async (id: number) => {
+    try {
+      await deleteGroup(id);
+      setConfirmDeleteGroupId(null);
+    } catch (e) {
+      toast((e as Error).message || '删除分组失败', true);
+    }
+  };
+
   const handleCreateBookmark = async () => {
     if (!newDraft.title.trim()) {
       toast('请填写书签名称', true);
@@ -310,7 +362,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
       : { transition: 'all 220ms ease' };
 
   const inputStyle: React.CSSProperties = {
-    background: 'rgba(var(--glass-rgb), 0.5)',
+    background: 'var(--input-bg)',
     border: '1px solid var(--glass-border)',
     color: 'var(--ink)',
   };
@@ -327,40 +379,32 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
     return (
       <div
         className="p-3 rounded-xl space-y-2.5"
-        style={{ background: 'rgba(var(--glass-rgb), 0.35)', border: '1px solid var(--glass-border)' }}
+        style={{ background: 'var(--code-bg)', border: '1px solid var(--glass-border)' }}
       >
         <div className="grid sm:grid-cols-2 gap-2">
           <input
             type="text"
             value={draft.title}
             onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-            placeholder="书签名称 *"
+            placeholder="名称 *"
             className="h-8 px-2.5 rounded-lg focus:outline-none"
             style={inputStyle}
           />
-          <select
-            value={draft.group_id}
-            onChange={(e) => setDraft({ ...draft, group_id: Number(e.target.value) })}
-            className="h-8 px-2.5 rounded-lg focus:outline-none"
-            style={{
-              background: 'rgba(var(--glass-rgb), 0.78)',
-              border: '1px solid var(--glass-border)',
-              color: 'var(--ink)',
-            }}
-          >
-            {ownGroups.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.name}
-              </option>
-            ))}
-          </select>
+          <OrbitSelect
+            size="sm"
+            value={String(draft.group_id)}
+            options={ownGroupOptions}
+            onChange={(v) => setDraft({ ...draft, group_id: Number(v) })}
+            className="w-full"
+            ariaLabel="所属分组"
+          />
         </div>
 
         <input
           type="text"
           value={draft.description}
           onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-          placeholder="简介 / 备注 (可选)"
+          placeholder="备注 (可选)"
           className="w-full h-8 px-2.5 rounded-lg focus:outline-none"
           style={inputStyle}
         />
@@ -370,7 +414,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
             type="text"
             value={draft.lan_url}
             onChange={(e) => setDraft({ ...draft, lan_url: e.target.value })}
-            placeholder="内网 LAN URL"
+            placeholder="LAN URL"
             className="h-8 px-2.5 rounded-lg font-mono focus:outline-none"
             style={inputStyle}
           />
@@ -386,7 +430,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
             type="text"
             value={draft.wan_url}
             onChange={(e) => setDraft({ ...draft, wan_url: e.target.value })}
-            placeholder="外网 WAN URL"
+            placeholder="WAN URL"
             className="h-8 px-2.5 rounded-lg font-mono focus:outline-none"
             style={inputStyle}
           />
@@ -431,177 +475,202 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
   return (
     <>
       <section data-section="sec-bm-view" style={sectionHighlightStyle('sec-bm-view')} className="space-y-3">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <span className="font-medium text-sm">书签展示风格与分组</span>
-          <div className="flex rounded-lg p-0.5" style={{ background: 'var(--pill-bg)' }}>
-            <button
-              type="button"
-              onClick={() => updateSettings({ dockStyle: 'card' })}
-              className="px-2.5 py-1 rounded-md cursor-pointer"
-              style={{
-                background: settings.dockStyle === 'card' ? 'var(--brand-solid)' : 'transparent',
-                color: settings.dockStyle === 'card' ? '#fff' : 'var(--ink-muted)',
-              }}
-            >
-              卡片视图
-            </button>
-            <button
-              type="button"
-              onClick={() => updateSettings({ dockStyle: 'icon' })}
-              className="px-2.5 py-1 rounded-md cursor-pointer"
-              style={{
-                background: settings.dockStyle === 'icon' ? 'var(--brand-solid)' : 'transparent',
-                color: settings.dockStyle === 'icon' ? '#fff' : 'var(--ink-muted)',
-              }}
-            >
-              图标视图
-            </button>
-          </div>
+        <div className="font-medium text-sm">展示样式</div>
+
+        <div className="grid grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            onClick={() => updateSettings({ dockStyle: 'card' })}
+            className="p-2.5 rounded-xl text-left cursor-pointer transition-all space-y-2"
+            style={{
+              background: settings.dockStyle === 'card' ? 'rgba(99, 102, 241, 0.16)' : 'var(--pill-bg)',
+              border:
+                settings.dockStyle === 'card'
+                  ? '1.5px solid var(--brand)'
+                  : '1px solid var(--glass-border)',
+            }}
+          >
+            <div className="grid grid-cols-2 gap-1.5">
+              {[0, 1, 2, 3].map((idx) => (
+                <div
+                  key={idx}
+                  className="p-1.5 rounded-lg flex items-center gap-1.5"
+                  style={{ background: 'var(--code-bg)', border: '1px solid var(--glass-border)' }}
+                >
+                  <span
+                    className="w-4 h-4 rounded shrink-0"
+                    style={{ background: idx % 2 === 0 ? 'var(--brand-solid)' : 'var(--ok)', opacity: 0.8 }}
+                  />
+                  <div className="flex-1 space-y-1 min-w-0">
+                    <div className="h-1.5 rounded-full w-4/5" style={{ background: 'var(--ink)', opacity: 0.6 }} />
+                    <div className="h-1 rounded-full w-3/5" style={{ background: 'var(--ink-muted)', opacity: 0.4 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between px-0.5">
+              <span className="font-medium">卡片视图</span>
+              <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                图标 + 简介
+              </span>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => updateSettings({ dockStyle: 'icon' })}
+            className="p-2.5 rounded-xl text-left cursor-pointer transition-all space-y-2"
+            style={{
+              background: settings.dockStyle === 'icon' ? 'rgba(99, 102, 241, 0.16)' : 'var(--pill-bg)',
+              border:
+                settings.dockStyle === 'icon'
+                  ? '1.5px solid var(--brand)'
+                  : '1px solid var(--glass-border)',
+            }}
+          >
+            <div className="grid grid-cols-4 gap-1.5 py-0.5">
+              {[0, 1, 2, 3].map((idx) => (
+                <div key={idx} className="flex flex-col items-center gap-1">
+                  <span
+                    className="w-7 h-7 rounded-lg"
+                    style={{ background: idx % 2 === 0 ? 'var(--brand-solid)' : 'var(--ok)', opacity: 0.8 }}
+                  />
+                  <span className="h-1 w-6 rounded-full" style={{ background: 'var(--ink)', opacity: 0.55 }} />
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between px-0.5">
+              <span className="font-medium">图标视图</span>
+              <span className="text-[11px]" style={{ color: 'var(--ink-muted)' }}>
+                紧凑网格
+              </span>
+            </div>
+          </button>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          {groups.map((g) => {
-            const count = groupCountMap.get(g.id) || 0;
-            const isRenaming = editingGroupId === g.id;
-            const isConfirmingDelete = confirmDeleteGroupId === g.id;
+        <div className="space-y-2 pt-1">
+          <div style={{ color: 'var(--ink-muted)' }}>分组管理</div>
+          <div className="flex flex-wrap gap-1.5">
+            {groups.map((g) => {
+              const count = groupCountMap.get(g.id) || 0;
+              const isRenaming = editingGroupId === g.id;
+              const isConfirmingDelete = confirmDeleteGroupId === g.id;
 
-            if (isRenaming) {
+              if (isRenaming) {
+                return (
+                  <div
+                    key={g.id}
+                    className="px-2 py-0.5 rounded-full flex items-center gap-1"
+                    style={{ background: 'var(--pill-bg)', border: '1px solid var(--brand)' }}
+                  >
+                    <input
+                      type="text"
+                      value={editingGroupName}
+                      autoFocus
+                      onChange={(e) => setEditingGroupName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void handleRenameGroup(g.id);
+                        else if (e.key === 'Escape') setEditingGroupId(null);
+                      }}
+                      className="w-24 bg-transparent focus:outline-none text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleRenameGroup(g.id)}
+                      className="p-0.5 cursor-pointer"
+                      style={{ color: 'var(--ok)' }}
+                      title="保存"
+                    >
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingGroupId(null)}
+                      className="p-0.5 opacity-70 hover:opacity-100 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              }
+
               return (
                 <div
                   key={g.id}
-                  className="px-2 py-0.5 rounded-full flex items-center gap-1"
-                  style={{ background: 'var(--pill-bg)', border: '1px solid var(--brand)' }}
+                  className="px-2.5 py-1 rounded-full flex items-center gap-1.5"
+                  style={{ background: 'var(--pill-bg)', border: '1px solid var(--glass-border)' }}
                 >
-                  <input
-                    type="text"
-                    value={editingGroupName}
-                    autoFocus
-                    onChange={(e) => setEditingGroupName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && editingGroupName.trim()) {
-                        void updateGroup(g.id, editingGroupName.trim()).then(() =>
-                          setEditingGroupId(null),
-                        );
-                      } else if (e.key === 'Escape') {
-                        setEditingGroupId(null);
-                      }
-                    }}
-                    className="w-24 bg-transparent focus:outline-none text-xs"
-                  />
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!editingGroupName.trim()) return;
-                      await updateGroup(g.id, editingGroupName.trim());
-                      setEditingGroupId(null);
-                    }}
-                    className="p-0.5 cursor-pointer"
-                    style={{ color: 'var(--ok)' }}
-                    title="保存分组名"
-                  >
-                    <Check className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingGroupId(null)}
-                    className="p-0.5 opacity-70 hover:opacity-100 cursor-pointer"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
+                  <span>{g.name}</span>
+                  <span className="font-mono text-[10px]" style={{ color: 'var(--ink-muted)' }}>
+                    {count}
+                  </span>
+                  {g.shared ? (
+                    <span style={{ color: 'var(--brand)' }}>(共享)</span>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirmDeleteGroupId(null);
+                          setEditingGroupId(g.id);
+                          setEditingGroupName(g.name);
+                        }}
+                        className="opacity-55 hover:opacity-100 cursor-pointer"
+                        title="重命名"
+                      >
+                        <Pencil className="w-2.5 h-2.5" />
+                      </button>
+                      {ownGroups.length > 1 &&
+                        (isConfirmingDelete ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteGroupSafe(g.id)}
+                            className="px-1.5 py-0.5 rounded-full text-[10px] text-white cursor-pointer"
+                            style={{ background: 'var(--danger)' }}
+                          >
+                            确认删
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (count > 0) setConfirmDeleteGroupId(g.id);
+                              else void handleDeleteGroupSafe(g.id);
+                            }}
+                            className="opacity-60 hover:opacity-100 hover:text-red-400 cursor-pointer"
+                            title="删除分组"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        ))}
+                    </>
+                  )}
                 </div>
               );
-            }
+            })}
+          </div>
 
-            return (
-              <div
-                key={g.id}
-                className="px-2.5 py-1 rounded-full flex items-center gap-1.5"
-                style={{ background: 'var(--pill-bg)', border: '1px solid var(--glass-border)' }}
-              >
-                <span>{g.name}</span>
-                <span className="font-mono text-[10px]" style={{ color: 'var(--ink-muted)' }}>
-                  {count}
-                </span>
-                {g.shared ? (
-                  <span style={{ color: 'var(--brand)' }}>(共享)</span>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setConfirmDeleteGroupId(null);
-                        setEditingGroupId(g.id);
-                        setEditingGroupName(g.name);
-                      }}
-                      className="opacity-55 hover:opacity-100 cursor-pointer"
-                      title="重命名分组"
-                    >
-                      <Pencil className="w-2.5 h-2.5" />
-                    </button>
-                    {ownGroups.length > 1 &&
-                      (isConfirmingDelete ? (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await deleteGroup(g.id);
-                            setConfirmDeleteGroupId(null);
-                          }}
-                          className="px-1.5 py-0.5 rounded-full text-[10px] text-white cursor-pointer"
-                          style={{ background: 'var(--danger)' }}
-                          title="确认删除分组及其下书签"
-                        >
-                          确认删
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (count > 0) setConfirmDeleteGroupId(g.id);
-                            else void deleteGroup(g.id);
-                          }}
-                          className="opacity-60 hover:opacity-100 hover:text-red-400 cursor-pointer"
-                          title="删除分组（该组书签同步删除）"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      ))}
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={newGroupName}
-            onChange={(e) => setNewGroupName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && newGroupName.trim()) {
-                void createGroup(newGroupName.trim()).then(() => setNewGroupName(''));
-              }
-            }}
-            placeholder="新建书签分组名..."
-            className="flex-1 h-8 px-2.5 rounded-lg focus:outline-none"
-            style={{
-              background: 'var(--pill-bg)',
-              border: '1px solid var(--glass-border)',
-              color: 'var(--ink)',
-            }}
-          />
-          <button
-            type="button"
-            onClick={async () => {
-              if (!newGroupName.trim()) return;
-              await createGroup(newGroupName.trim());
-              setNewGroupName('');
-            }}
-            className="px-3 h-8 rounded-lg cursor-pointer"
-            style={{ background: 'var(--pill-hover)' }}
-          >
-            + 新建分组
-          </button>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleCreateGroup();
+              }}
+              placeholder="新建分组名称..."
+              className="flex-1 h-8 px-2.5 rounded-lg focus:outline-none"
+              style={inputStyle}
+            />
+            <button
+              type="button"
+              onClick={() => void handleCreateGroup()}
+              className="px-3 h-8 rounded-lg cursor-pointer orbit-hover"
+              style={{ background: 'var(--pill-hover)' }}
+            >
+              + 新建
+            </button>
+          </div>
         </div>
       </section>
 
@@ -616,7 +685,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
             onClick={() => setListExpanded((v) => !v)}
             className="flex items-center gap-2 cursor-pointer text-left"
           >
-            <span className="font-medium text-sm">书签列表与编辑</span>
+            <span className="font-medium text-sm">书签列表</span>
             <span className="kbd-chip font-mono">{bookmarks.length}</span>
             {listExpanded ? (
               <ChevronUp className="w-4 h-4 opacity-70" />
@@ -633,15 +702,15 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
               style={{ background: 'var(--brand-solid)' }}
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>新增书签</span>
+              <span>新增</span>
             </button>
             <button
               type="button"
               onClick={() => setListExpanded((v) => !v)}
-              className="px-2.5 h-7 rounded-lg cursor-pointer"
+              className="px-2.5 h-7 rounded-lg cursor-pointer orbit-hover"
               style={{ background: 'var(--pill-bg)', color: 'var(--ink-muted)' }}
             >
-              {listExpanded ? '收起列表' : '展开列表'}
+              {listExpanded ? '收起' : '展开'}
             </button>
           </div>
         </div>
@@ -659,26 +728,14 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
               )}
 
             <div className="grid sm:grid-cols-5 gap-2">
-              <select
-                value={filterGroupId}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setFilterGroupId(val === 'all' ? 'all' : Number(val));
-                }}
-                className="sm:col-span-2 h-8 px-2.5 rounded-lg focus:outline-none"
-                style={{
-                  background: 'rgba(var(--glass-rgb), 0.78)',
-                  border: '1px solid var(--glass-border)',
-                  color: 'var(--ink)',
-                }}
-              >
-                <option value="all">全部分组 ({bookmarks.length})</option>
-                {groups.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name} ({groupCountMap.get(g.id) || 0})
-                  </option>
-                ))}
-              </select>
+              <OrbitSelect
+                size="sm"
+                value={filterGroupId === 'all' ? 'all' : String(filterGroupId)}
+                options={filterGroupOptions}
+                onChange={(val) => setFilterGroupId(val === 'all' ? 'all' : Number(val))}
+                className="sm:col-span-2 w-full"
+                ariaLabel="按分组筛选"
+              />
 
               <div className="sm:col-span-3 relative">
                 <Search
@@ -689,13 +746,9 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                   type="text"
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
-                  placeholder="搜索书签名称、描述或网址..."
+                  placeholder="搜索书签..."
                   className="w-full h-8 pl-8 pr-7 rounded-lg focus:outline-none"
-                  style={{
-                    background: 'var(--pill-bg)',
-                    border: '1px solid var(--glass-border)',
-                    color: 'var(--ink)',
-                  }}
+                  style={inputStyle}
                 />
                 {searchText && (
                   <button
@@ -721,10 +774,10 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                     onChange={toggleSelectAllFiltered}
                   />
                   <span>
-                    全选当前 ({filteredOwnBookmarks.length})
+                    全选 ({filteredOwnBookmarks.length})
                     {selectedIds.size > 0 && (
                       <span className="ml-1.5 font-medium" style={{ color: 'var(--brand)' }}>
-                        · 已选 {selectedIds.size} 项
+                        · 已选 {selectedIds.size}
                       </span>
                     )}
                   </span>
@@ -734,29 +787,20 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {ownGroups.length > 1 && (
                       <div className="flex items-center gap-1">
-                        <select
-                          value={moveTargetGroupId}
-                          onChange={(e) => setMoveTargetGroupId(Number(e.target.value))}
-                          className="h-7 px-2 rounded-lg focus:outline-none"
-                          style={{
-                            background: 'rgba(var(--glass-rgb), 0.78)',
-                            border: '1px solid var(--glass-border)',
-                            color: 'var(--ink)',
-                          }}
-                        >
-                          {ownGroups.map((g) => (
-                            <option key={g.id} value={g.id}>
-                              {g.name}
-                            </option>
-                          ))}
-                        </select>
+                        <OrbitSelect
+                          size="xs"
+                          value={String(moveTargetGroupId)}
+                          options={ownGroupOptions}
+                          onChange={(v) => setMoveTargetGroupId(Number(v))}
+                          className="w-28"
+                          ariaLabel="目标分组"
+                        />
                         <button
                           type="button"
                           disabled={batchBusy}
                           onClick={() => void handleBatchMove()}
-                          className="h-7 px-2.5 rounded-lg flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                          className="h-7 px-2.5 rounded-lg flex items-center gap-1 cursor-pointer disabled:opacity-50 orbit-hover"
                           style={{ background: 'var(--pill-hover)' }}
-                          title="将选中书签移动到指定分组"
                         >
                           <FolderInput className="w-3.5 h-3.5" />
                           <span>移动</span>
@@ -773,7 +817,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                         style={{ background: 'rgba(248, 113, 113, 0.16)', color: 'var(--danger)' }}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        <span>批量删除 ({selectedIds.size})</span>
+                        <span>删除 ({selectedIds.size})</span>
                       </button>
                     ) : (
                       <>
@@ -789,7 +833,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                           ) : (
                             <Trash2 className="w-3.5 h-3.5" />
                           )}
-                          <span>确认删除 {selectedIds.size} 条</span>
+                          <span>确认</span>
                         </button>
                         <button
                           type="button"
@@ -812,14 +856,15 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                 className="p-5 rounded-xl text-center"
                 style={{ background: 'var(--pill-bg)', color: 'var(--ink-muted)' }}
               >
-                {bookmarks.length === 0 ? '暂无书签，点击上方「新增书签」或在下方导入' : '没有符合条件的书签'}
+                {bookmarks.length === 0 ? '暂无书签' : '没有匹配的书签'}
               </div>
             ) : (
               <div className="space-y-1.5 max-h-[340px] overflow-y-auto pr-0.5">
                 {filteredBookmarks.map((bm) => {
                   const isExpanded = expandedBookmarkId === bm.id;
                   const isSelected = selectedIds.has(bm.id);
-                  const activeUrl = getBookmarkActiveUrl(bm, zone) || bm.lan_url || bm.ts_url || bm.wan_url;
+                  const activeUrl =
+                    getBookmarkActiveUrl(bm, zone) || bm.lan_url || bm.ts_url || bm.wan_url;
                   const groupLabel = groupNameMap.get(bm.group_id) || '默认';
 
                   return (
@@ -839,7 +884,6 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                           disabled={Boolean(bm.shared)}
                           checked={isSelected}
                           onChange={() => toggleSelectBookmark(bm.id)}
-                          title={bm.shared ? '共享书签为只读，无法删除' : '选中'}
                         />
 
                         <button
@@ -860,7 +904,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                               <span className="font-medium truncate max-w-[180px]">{bm.title}</span>
                               <span
                                 className="px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                                style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--ink-muted)' }}
+                                style={{ background: 'var(--track-bg)', color: 'var(--ink-muted)' }}
                               >
                                 {groupLabel}
                               </span>
@@ -873,17 +917,17 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                                 </span>
                               )}
                               {bm.lan_url && (
-                                <span className="px-1 py-0.2 rounded text-[10px] font-mono" style={{ color: 'var(--ok)' }}>
+                                <span className="px-1 text-[10px] font-mono" style={{ color: 'var(--ok)' }}>
                                   LAN
                                 </span>
                               )}
                               {bm.ts_url && (
-                                <span className="px-1 py-0.2 rounded text-[10px] font-mono" style={{ color: 'var(--brand)' }}>
+                                <span className="px-1 text-[10px] font-mono" style={{ color: 'var(--brand)' }}>
                                   TS
                                 </span>
                               )}
                               {bm.wan_url && (
-                                <span className="px-1 py-0.2 rounded text-[10px] font-mono" style={{ color: 'var(--warn)' }}>
+                                <span className="px-1 text-[10px] font-mono" style={{ color: 'var(--warn)' }}>
                                   WAN
                                 </span>
                               )}
@@ -900,8 +944,8 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                               href={activeUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="p-1.5 rounded-lg hover:bg-white/10 opacity-75 hover:opacity-100"
-                              title="在新标签页打开"
+                              className="p-1.5 rounded-lg orbit-hover opacity-75 hover:opacity-100"
+                              title="打开"
                             >
                               <ExternalLink className="w-3.5 h-3.5" />
                             </a>
@@ -909,9 +953,9 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                           <button
                             type="button"
                             onClick={() => openExpandBookmark(bm)}
-                            className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"
+                            className="p-1.5 rounded-lg orbit-hover cursor-pointer"
                             style={{ color: isExpanded ? 'var(--brand)' : undefined }}
-                            title={bm.shared ? '查看详情' : isExpanded ? '收起编辑' : '展开编辑'}
+                            title="编辑"
                           >
                             {isExpanded ? (
                               <ChevronUp className="w-3.5 h-3.5" />
@@ -924,21 +968,25 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                               <button
                                 type="button"
                                 onClick={async () => {
-                                  await deleteBookmark(bm.id);
-                                  setConfirmDeleteId(null);
+                                  try {
+                                    await deleteBookmark(bm.id);
+                                    setConfirmDeleteId(null);
+                                  } catch (e) {
+                                    toast((e as Error).message || '删除书签失败', true);
+                                  }
                                 }}
                                 className="px-2 py-1 rounded-lg text-[11px] text-white cursor-pointer"
                                 style={{ background: 'var(--danger)' }}
                               >
-                                确认删
+                                确认
                               </button>
                             ) : (
                               <button
                                 type="button"
                                 onClick={() => setConfirmDeleteId(bm.id)}
-                                className="p-1.5 rounded-lg hover:bg-white/10 cursor-pointer"
+                                className="p-1.5 rounded-lg orbit-hover cursor-pointer"
                                 style={{ color: 'var(--danger)' }}
-                                title="删除书签"
+                                title="删除"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
@@ -951,7 +999,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                           {bm.shared ? (
                             <div
                               className="p-2.5 rounded-xl space-y-1 font-mono"
-                              style={{ background: 'rgba(var(--glass-rgb), 0.35)', color: 'var(--ink-muted)' }}
+                              style={{ background: 'var(--code-bg)', color: 'var(--ink-muted)' }}
                             >
                               {bm.description && <div>备注：{bm.description}</div>}
                               {bm.lan_url && <div className="truncate">LAN: {bm.lan_url}</div>}
@@ -989,7 +1037,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
         className="space-y-3 pt-4 border-t"
       >
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <span className="font-medium text-sm">批量导入书签</span>
+          <span className="font-medium text-sm">导入书签</span>
           <div className="flex rounded-lg p-0.5" style={{ background: 'var(--pill-bg)' }}>
             <button
               type="button"
@@ -1018,20 +1066,17 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
 
         {importTab === 'sunpanel' ? (
           <div className="space-y-2.5 p-3 rounded-xl" style={{ background: 'var(--pill-bg)' }}>
-            <div style={{ color: 'var(--ink-muted)' }}>
-              兼容 Sun-Panel 1.x 完整导出 JSON 与旧版数组格式，自动按原分组导入并识别内网 / 外网地址
-            </div>
             <textarea
               rows={4}
               value={sunPanelText}
               onChange={(e) => setSunPanelText(e.target.value)}
-              placeholder="粘贴 Sun-Panel 导出的 .json 文件内容，或点击下方选择文件..."
+              placeholder="粘贴 Sun-Panel 导出的 JSON 内容..."
               className="w-full p-2.5 rounded-lg font-mono focus:outline-none resize-none"
               style={inputStyle}
             />
             <div className="flex items-center justify-between gap-2">
               <label className="cursor-pointer hover:underline" style={{ color: 'var(--brand)' }}>
-                选择 Sun-Panel .json 文件
+                选择 .json 文件
                 <input
                   type="file"
                   accept=".json,application/json"
@@ -1058,14 +1103,14 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                 className="px-4 h-8 rounded-lg text-white font-medium cursor-pointer disabled:opacity-50"
                 style={{ background: 'var(--brand-solid)' }}
               >
-                {importingSunPanel ? '导入中...' : '执行 Sun-Panel 导入'}
+                {importingSunPanel ? '导入中...' : '开始导入'}
               </button>
             </div>
           </div>
         ) : (
           <div className="p-3 rounded-xl space-y-2.5" style={{ background: 'var(--pill-bg)' }}>
             <div className="grid sm:grid-cols-3 gap-2 items-center">
-              <span style={{ color: 'var(--ink-muted)' }}>导入归类分组名称</span>
+              <span style={{ color: 'var(--ink-muted)' }}>目标分组</span>
               <input
                 type="text"
                 value={browserGroupName}
@@ -1079,13 +1124,13 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
               rows={4}
               value={browserHtml}
               onChange={(e) => setBrowserHtml(e.target.value)}
-              placeholder="支持 Chrome / Edge / Firefox / Safari 导出的书签 .html 文件内容..."
+              placeholder="粘贴浏览器导出的书签 HTML..."
               className="w-full p-2.5 rounded-lg font-mono focus:outline-none resize-none"
               style={inputStyle}
             />
             <div className="flex items-center justify-between gap-2">
               <label className="cursor-pointer hover:underline" style={{ color: 'var(--brand)' }}>
-                选择浏览器书签 .html 文件
+                选择 .html 文件
                 <input
                   type="file"
                   accept=".html,.htm,text/html"
@@ -1115,7 +1160,7 @@ export function BookmarksSettingsPanel({ highlightSection }: SettingsPanelProps)
                 className="px-4 h-8 rounded-lg text-white font-medium cursor-pointer disabled:opacity-50"
                 style={{ background: 'var(--brand-solid)' }}
               >
-                {importingBrowser ? '导入中...' : '一键导入为一类'}
+                {importingBrowser ? '导入中...' : '开始导入'}
               </button>
             </div>
           </div>

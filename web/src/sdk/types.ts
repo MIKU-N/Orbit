@@ -18,18 +18,25 @@ import type {
   GuestSpec,
   LayoutBox,
   LayoutItemId,
+  ManagedAsset,
   NetworkZone,
   PeerInfo,
   PluginManifest,
   PluginStateRecord,
+  PluginStyleOverride,
+  PluginStyleSpec,
+  PluginVisibilityOverride,
   ProxyRule,
   PublicConfig,
+  ResourceCdnConfig,
+  ResourceCdnMode,
   SearchProviderContrib,
   SettingsContrib,
   ShareScopes,
   SharingSpec,
   StagedFile,
   SystemMetrics,
+  ThemeMode,
   User,
   UserSettings,
   WeatherPayload,
@@ -53,18 +60,25 @@ export type {
   GuestSpec,
   LayoutBox,
   LayoutItemId,
+  ManagedAsset,
   NetworkZone,
   PeerInfo,
   PluginManifest,
   PluginStateRecord,
+  PluginStyleOverride,
+  PluginStyleSpec,
+  PluginVisibilityOverride,
   ProxyRule,
   PublicConfig,
+  ResourceCdnConfig,
+  ResourceCdnMode,
   SearchProviderContrib,
   SettingsContrib,
   ShareScopes,
   SharingSpec,
   StagedFile,
   SystemMetrics,
+  ThemeMode,
   TransferProgress,
   User,
   UserSettings,
@@ -122,6 +136,7 @@ export interface ResolvedWidget {
   manifest: PluginManifest;
   record: PluginStateRecord;
   visible: boolean;
+  cardless: boolean;
   guestReadonly: boolean;
   Component?: React.ComponentType<WidgetProps>;
 }
@@ -155,6 +170,7 @@ export interface SharingScopeDescriptor {
 }
 
 export interface HostAPI {
+  appVersion: string;
   authInitialized: boolean;
   authenticated: boolean;
   user: User | null;
@@ -170,9 +186,14 @@ export interface HostAPI {
   publicConfig: PublicConfig | null;
 
   settings: UserSettings;
+  cdnBase: string;
+  resolvedTheme: 'dark' | 'light';
+  toggleDayNight: (ev?: React.MouseEvent<HTMLElement>) => void;
   updateSettings: (
     patch: Partial<UserSettings> | ((prev: UserSettings) => UserSettings),
   ) => void;
+  isWidgetCardless: (key: string, defaultCardless?: boolean) => boolean;
+  toggleWidgetCardless: (key: string, defaultCardless?: boolean) => void;
   layoutEditing: boolean;
   setLayoutEditing: (v: boolean) => void;
   startLayoutEdit: () => void;
@@ -187,6 +208,10 @@ export interface HostAPI {
   refreshPlugins: () => Promise<void>;
   togglePlugin: (id: string, enabled: boolean) => Promise<void>;
   savePluginConfig: (id: string, config: Record<string, unknown>) => Promise<void>;
+  updatePluginPolicy: (
+    id: string,
+    patch: { visibility?: PluginVisibilityOverride; style?: PluginStyleOverride },
+  ) => Promise<void>;
 
   activeDrawer: string | null;
   openDrawer: (drawerId: string | null) => void;
@@ -197,7 +222,7 @@ export interface HostAPI {
   openLogin: () => void;
   promptGuestLogin: (msg: string) => void;
   toast: (msg: string, warn?: boolean) => void;
-  copyText: (text: string, label?: string) => void;
+  copyText: (text: string, label?: string) => Promise<boolean>;
   rotateToken: () => Promise<void>;
   uploadAvatar: (file: File) => Promise<void>;
   deleteAvatar: () => Promise<void>;
@@ -224,15 +249,16 @@ export interface HostAPI {
   importSunPanel: (rawJson: string) => Promise<boolean>;
   importBrowserBookmarks: (html: string, groupName: string) => Promise<boolean>;
 
-  openMonitorModal: () => void;
-
   clips: ClipItem[];
   refreshClips: () => Promise<void>;
   markLocalClipCreated: (id: number) => void;
 
   filesData: FilesResponse | null;
   refreshFiles: () => Promise<void>;
-  uploadFiles: (files: FileList | File[]) => Promise<void>;
+  uploadFiles: (
+    files: FileList | File[],
+    opts?: { ttlHours?: number; permanent?: boolean; targetPeerId?: string; openPopover?: boolean },
+  ) => Promise<void>;
   uploadProgress: { fileName: string; percent: number; loaded: number; total: number; speedBps: number } | null;
   uploadError: string | null;
   clearUploadError: () => void;

@@ -15,11 +15,18 @@ func (p *Plugin) Manifest() plugin.Manifest {
 		Version:        "1.0.0",
 		Description:    "居中极简数字时钟，支持秒数显示开关",
 		Icon:           "clock",
-		Tier:           "builtin",
+		Tier:           "light",
+		Source:         "official",
 		DefaultEnabled: true,
 		Access: plugin.AccessSpec{
-			MinRole: "public",
-			Guest:   plugin.GuestSpec{Mode: "full"},
+			MinRole:     "public",
+			Guest:       plugin.GuestSpec{Mode: "full"},
+			AllowPublic: true,
+		},
+		Style: &plugin.StyleSpec{
+			Managed:          true,
+			SupportsCardless: true,
+			DefaultCardless:  true,
 		},
 		Contributes: plugin.ContributesSpec{
 			Widgets: []plugin.WidgetContrib{
@@ -29,7 +36,7 @@ func (p *Plugin) Manifest() plugin.Manifest {
 					Label:          "时钟",
 					MinW:           220,
 					DefaultW:       340,
-					Resizable:      false,
+					Resizable:      true,
 					DefaultVisible: true,
 				},
 			},

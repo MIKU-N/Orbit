@@ -41,7 +41,8 @@ func (k *Kernel) LoadExternalPlugins() error {
 		if err := json.Unmarshal(raw, &m); err != nil {
 			continue
 		}
-		m.Tier = "external"
+		m.Tier = "light"
+		m.Source = "external"
 		if err := plugin.ValidateManifest(&m); err != nil {
 			continue
 		}
@@ -78,6 +79,11 @@ func (k *Kernel) handleExternalAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	if !k.IsPluginEnabled(id) {
 		plugin.WriteErr(w, http.StatusForbidden, "plugin disabled")
+		return
+	}
+	u, _ := k.authenticateRequest(r)
+	if !k.CanUserAccessPlugin(id, u) {
+		plugin.WriteErr(w, http.StatusForbidden, "无权访问此插件资源")
 		return
 	}
 	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+r.PathValue("path"))), "/")
@@ -123,11 +129,15 @@ func (k *Kernel) handleExternalKV(w http.ResponseWriter, r *http.Request) {
 		plugin.WriteErr(w, http.StatusForbidden, "plugin disabled")
 		return
 	}
+	u := k.CurrentUser(r)
+	if !k.CanUserAccessPlugin(id, u) {
+		plugin.WriteErr(w, http.StatusForbidden, "无权访问此插件资源")
+		return
+	}
 	if !ext.manifest.HasPermission("kv") {
 		plugin.WriteErr(w, http.StatusForbidden, "plugin lacks kv permission")
 		return
 	}
-	u := k.CurrentUser(r)
 	key := strings.TrimSpace(r.PathValue("key"))
 	store := k.KV(id)
 
@@ -196,8 +206,13 @@ func (k *Kernel) handleExternalProxy(w http.ResponseWriter, r *http.Request) {
 		plugin.WriteErr(w, http.StatusForbidden, "plugin disabled")
 		return
 	}
+	u, _ := k.authenticateRequest(r)
+	if !k.CanUserAccessPlugin(id, u) {
+		plugin.WriteErr(w, http.StatusForbidden, "无权访问此插件资源")
+		return
+	}
 	var uid int64
-	if u, err := k.authenticateRequest(r); err == nil && u != nil {
+	if u != nil {
 		uid = u.ID
 	}
 	k.executePluginProxy(w, r, ext.manifest, route, uid)
@@ -245,7 +260,8 @@ func (k *Kernel) handleInstallExternalPlugin(w http.ResponseWriter, r *http.Requ
 		plugin.WriteErr(w, http.StatusBadRequest, "invalid plugin JSON payload")
 		return
 	}
-	req.Manifest.Tier = "external"
+	req.Manifest.Tier = "light"
+	req.Manifest.Source = "external"
 	if err := plugin.ValidateManifest(&req.Manifest); err != nil {
 		plugin.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -320,7 +336,8 @@ func (k *Kernel) installFromZip(data []byte) (plugin.Manifest, error) {
 	if err := json.Unmarshal(manifestRaw, &m); err != nil {
 		return plugin.Manifest{}, err
 	}
-	m.Tier = "external"
+	m.Tier = "light"
+	m.Source = "external"
 	if err := plugin.ValidateManifest(&m); err != nil {
 		return plugin.Manifest{}, err
 	}

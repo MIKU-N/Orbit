@@ -1,14 +1,25 @@
 import { useEffect, useState } from 'react';
+import { WidgetSurface } from '../../sdk/primitives';
 
 interface ClockWidgetProps {
   showSeconds: boolean;
+  cardless: boolean;
+  managed: boolean;
+  enableTilt: boolean;
   onToggleSeconds: () => void;
   layoutEditing: boolean;
 }
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
 
-export function ClockWidget({ showSeconds, onToggleSeconds, layoutEditing }: ClockWidgetProps) {
+export function ClockWidget({
+  showSeconds,
+  cardless,
+  managed,
+  enableTilt,
+  onToggleSeconds,
+  layoutEditing,
+}: ClockWidgetProps) {
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -23,16 +34,31 @@ export function ClockWidget({ showSeconds, onToggleSeconds, layoutEditing }: Clo
   const dateStr = `${now.getMonth() + 1}月${now.getDate()}日 星期${WEEKDAYS[now.getDay()]}`;
 
   return (
-    <div
-      className="cursor-pointer py-1 select-none"
+    <WidgetSurface
+      cardless={cardless}
+      managed={managed}
+      enableTilt={enableTilt}
+      layoutEditing={layoutEditing}
       onClick={() => {
         if (!layoutEditing) onToggleSeconds();
       }}
+      cardClassName="rounded-2xl px-6 py-4 cursor-pointer select-none text-center"
+      plainClassName="py-1 cursor-pointer select-none text-center"
     >
-      <div className="text-6xl sm:text-7xl font-light tracking-tight tabular-nums hero-shadow text-white">
+      <div
+        className={`text-6xl sm:text-7xl font-light tracking-tight tabular-nums ${
+          cardless ? 'hero-shadow' : ''
+        }`}
+        style={{ color: cardless ? 'var(--hero-ink)' : 'var(--ink)' }}
+      >
         {timeStr}
       </div>
-      <div className="text-xs sm:text-sm font-normal hero-shadow text-white/80 mt-1">{dateStr}</div>
-    </div>
+      <div
+        className={`text-xs sm:text-sm font-normal mt-1 ${cardless ? 'hero-shadow' : ''}`}
+        style={{ color: cardless ? 'var(--hero-ink-muted)' : 'var(--ink-muted)' }}
+      >
+        {dateStr}
+      </div>
+    </WidgetSurface>
   );
 }

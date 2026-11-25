@@ -3,17 +3,17 @@ import type { OrbitPlugin } from '../../sdk/types';
 import { MonitorSettingsPanel } from './MonitorSettingsPanel';
 import { MonitorWidget } from './MonitorWidget';
 
-export { MonitorModal } from './MonitorModal';
-
-function MonitorPluginWidget() {
+function MonitorPluginWidget({ layoutKey, manifest }: { layoutKey: string; manifest: OrbitPlugin['manifest'] }) {
   const host = useOrbitHost();
+  const cardless = host.isWidgetCardless(layoutKey, Boolean(manifest.style?.defaultCardless));
   return (
     <MonitorWidget
       metrics={host.metrics}
       config={host.settings.monitorConfig}
-      enableTilt={host.settings.enableTilt}
+      cardless={cardless}
+      enableTilt={host.settings.enableTilt && host.settings.enableAnimations !== false}
       layoutEditing={host.layoutEditing}
-      onOpenDetail={host.openMonitorModal}
+      onOpenDetail={() => host.openSettings('monitor')}
     />
   );
 }
@@ -22,12 +22,17 @@ export const monitorPlugin: OrbitPlugin = {
   id: 'orbit.monitor',
   manifest: {
     id: 'orbit.monitor',
-    name: '系统监控',
+    name: '节点监控',
     version: '1.0.0',
-    description: '宿主机 CPU / 内存 / 磁盘 / 温度与实时网络速率看板',
+    description: '宿主机实时遥测',
     icon: 'cpu',
-    tier: 'builtin',
+    tier: 'core',
+    source: 'official',
     defaultEnabled: true,
+    style: {
+      managed: true,
+      supportsCardless: true,
+    },
     access: {
       minRole: 'user',
       guest: { mode: 'hidden' },

@@ -3,13 +3,15 @@ import type { OrbitPlugin } from '../../sdk/types';
 import { SearchSettingsPanel } from './SearchSettingsPanel';
 import { SearchWidget } from './SearchWidget';
 
-function SearchPluginWidget() {
+function SearchPluginWidget({ layoutKey, manifest }: { layoutKey: string; manifest: OrbitPlugin['manifest'] }) {
   const host = useOrbitHost();
+  const cardless = host.isWidgetCardless(layoutKey, Boolean(manifest.style?.defaultCardless));
   return (
     <SearchWidget
       engines={host.settings.engines}
       activeEngineId={host.settings.activeEngineId}
       iconOnly={host.settings.searchIconOnly}
+      cardless={cardless}
       guestMode={host.isGuest}
       onSelectEngine={(id) => host.updateSettings({ activeEngineId: id })}
       onOpenEngineManager={() => host.openSettings('search')}
@@ -25,15 +27,21 @@ export const searchPlugin: OrbitPlugin = {
   id: 'orbit.search',
   manifest: {
     id: 'orbit.search',
-    name: '聚合搜索',
+    name: '统一搜索',
     version: '1.0.0',
-    description: '多搜索引擎切换、图标定制与站内插件聚合检索',
+    description: '多引擎切换与站内聚合检索',
     icon: 'search',
-    tier: 'builtin',
+    tier: 'core',
+    source: 'official',
     defaultEnabled: true,
     access: {
       minRole: 'public',
       guest: { mode: 'readonly' },
+      allowPublic: true,
+    },
+    style: {
+      managed: true,
+      supportsCardless: true,
     },
     contributes: {
       widgets: [
